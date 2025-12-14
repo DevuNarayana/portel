@@ -3847,6 +3847,13 @@
                 return () => stopCam(); // Cleanup on unmount
             }, [student, examType]);
 
+            // Fix: Attach stream to video element when it becomes active (Ref is available)
+            useEffect(() => {
+                if (isCamActive && videoRef.current && mediaStreamRef.current) {
+                    videoRef.current.srcObject = mediaStreamRef.current;
+                }
+            }, [isCamActive]); // Depend on isCamActive
+
             const loadStudentResponse = (s) => {
                 const responses = window.Utils.getResponses();
                 const resp = responses.find(r => r.studentId === s.id && r.examType === examType);
@@ -3860,7 +3867,8 @@
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
                     mediaStreamRef.current = stream;
-                    if (videoRef.current) videoRef.current.srcObject = stream;
+                    // Note: videoRef is null here because isCamActive is false. 
+                    // The useEffect above handles the assignment once renders.
                     setIsCamActive(true);
                 } catch (err) {
                     alert("Could not access camera: " + err.message);
@@ -4024,7 +4032,7 @@
                                 <div>
                                     <div className="grid md:grid-cols-2 gap-4">
                                         <div className="relative bg-black rounded overflow-hidden aspect-video shadow-2xl border border-gray-700">
-                                            <video ref={videoRef} autoPlay muted className="w-full h-full object-cover"></video>
+                                            <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover"></video>
                                             {isRecording && (
                                                 <div className="absolute top-4 right-4 animate-pulse flex items-center gap-2 bg-red-600/90 backdrop-blur text-white px-3 py-1 rounded-full text-xs font-bold ring-2 ring-red-500/50">
                                                     <span className="w-2 h-2 rounded-full bg-white"></span> RECORDING
