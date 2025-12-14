@@ -3864,10 +3864,12 @@
             };
 
             // Camera Functions
-            // Camera Functions
             const startCam = async (modeOverride = null) => {
                 const targetMode = modeOverride || facingMode;
                 stopCam(); // Cleanup
+
+                // Fix: Wait 500ms for hardware to fully release
+                await new Promise(r => setTimeout(r, 500));
 
                 // 1. Check for Secure Context
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -3877,14 +3879,14 @@
 
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({
-                        video: { facingMode: targetMode }, // Use strict mode
+                        video: { facingMode: targetMode },
                         audio: true
                     });
                     mediaStreamRef.current = stream;
                     setIsCamActive(true);
                 } catch (err) {
                     console.warn(`Camera failed (${targetMode})`, err);
-                    alert(`Camera Error (${targetMode}): ${err.name}.\nTry switching cameras.`);
+                    alert(`Camera Error (${targetMode}): ${err.name}.\nWait a moment and try switching again.`);
                 }
             };
 
