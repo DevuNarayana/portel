@@ -3949,7 +3949,13 @@
                 }
                 resp.evidence = newEvidence;
                 localStorage.setItem(DB_KEYS.RESPONSES, JSON.stringify(responses));
-                alert(type === 'MANUAL_CAPTURE_PHOTO' ? 'Photo Captured!' : 'Video Saved!');
+
+                // SYNC TO CLOUD: Immediately upload response so Admin sees it
+                window.Utils.uploadToCloud(true).then(() => {
+                    console.log("Evidence Synced to Cloud");
+                }).catch(err => console.error("Sync Failed", err));
+
+                alert(type === 'MANUAL_CAPTURE_PHOTO' ? 'Photo Captured! (Syncing...)' : 'Video Saved! (Syncing...)');
             };
 
 
@@ -3976,7 +3982,11 @@
                 }
 
                 localStorage.setItem(DB_KEYS.RESPONSES, JSON.stringify(responses));
-                alert("Grades Saved Successfully!");
+
+                // SYNC TO CLOUD
+                window.Utils.uploadToCloud(true).catch(console.error);
+
+                alert("Grades Saved Successfully! (Synced)");
             };
 
             const deleteEvidence = async () => {
@@ -3999,10 +4009,13 @@
                 if (idx >= 0) {
                     responses[idx].evidence = []; // Clear evidence
                     localStorage.setItem(DB_KEYS.RESPONSES, JSON.stringify(responses));
+
+                    // SYNC TO CLOUD
+                    window.Utils.uploadToCloud(true).catch(console.error);
                 }
 
                 setEvidence([]); // Clear UI
-                alert("Evidence Deleted Successfully.");
+                alert("Evidence Deleted Successfully. (Synced)");
             };
 
             // Helper to download all evidence
