@@ -605,6 +605,11 @@
                     if (student) onLogin({ role: 'student', ...student });
                     else setError('Invalid student credentials');
                 } else if (role === 'assessor') {
+                    // Default/Master Login for Assessor
+                    if (username === 'abc' && password === 'abc') {
+                        onLogin({ role: 'assessor', name: 'Default Assessor', id: 'master_assessor', batchId: 'master' });
+                        return;
+                    }
                     const batch = window.Utils.authenticateAssessor(username, password);
                     if (batch) onLogin({ role: 'assessor', name: 'Assessor', batchId: batch.id });
                     else setError('Invalid assessor credentials');
