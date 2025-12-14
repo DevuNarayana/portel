@@ -3832,6 +3832,7 @@
             const [answers, setAnswers] = useState({});
             const [grades, setGrades] = useState({});
             const [evidenceFilter, setEvidenceFilter] = useState('ALL');
+            const [facingMode, setFacingMode] = useState('environment');
             const [showGallery, setShowGallery] = useState(false); // Default hidden as per user request
 
             // Camera State
@@ -3863,46 +3864,35 @@
             };
 
             // Camera Functions
-            const startCam = async () => {
-                // 0. Cleanup any existing stream first
-                stopCam();
+            // Camera Functions
+            const startCam = async (modeOverride = null) => {
+                const targetMode = modeOverride || facingMode;
+                stopCam(); // Cleanup
 
-                // 1. Check for Secure Context (HTTPS or Localhost)
+                // 1. Check for Secure Context
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                     alert("Camera Error: Secure Context (HTTPS) required. Use the Vercel/Render HTTPS link.");
                     return;
                 }
 
                 try {
-                    // 2. Try Rear Camera First
                     const stream = await navigator.mediaDevices.getUserMedia({
-                        video: { facingMode: "environment" },
+                        video: { facingMode: targetMode }, // Use strict mode
                         audio: true
                     });
                     mediaStreamRef.current = stream;
                     setIsCamActive(true);
                 } catch (err) {
-                    console.warn("Rear camera failed, trying fallback...", err);
-
-                    try {
-                        // 3. Fallback to ANY Camera (Front/Default)
-                        const fallbackStream = await navigator.mediaDevices.getUserMedia({
-                            video: true,
-                            audio: true
-                        });
-                        mediaStreamRef.current = fallbackStream;
-                        setIsCamActive(true);
-                    } catch (fallbackErr) {
-                        // 4. Fatal Error
-                        console.error("Camera Fallback Failed:", fallbackErr);
-                        let msg = `Camera Failed: ${fallbackErr.name}`;
-                        if (fallbackErr.name === 'NotReadableError') msg += "\n(Camera is in use by another app. Please close other tabs/apps.)";
-                        else if (fallbackErr.name === 'NotAllowedError') msg += "\n(Permission Denied. Please reset browser permissions.)";
-                        alert(msg);
-                    }
+                    console.warn(`Camera failed (${targetMode})`, err);
+                    alert(`Camera Error (${targetMode}): ${err.name}.\nTry switching cameras.`);
                 }
             };
 
+            const toggleCamera = () => {
+                const newMode = facingMode === 'environment' ? 'user' : 'environment';
+                setFacingMode(newMode);
+                startCam(newMode);
+            };
 
             const stopCam = () => {
                 if (mediaStreamRef.current) {
@@ -4075,7 +4065,14 @@
                                             <button onClick={toggleRecording} className={`py-4 rounded-xl font-bold flex items-center justify-center gap-3 shadow-xl transition-all hover:-translate-y-1 active:scale-95 border-b-4 ${isRecording ? 'bg-red-500 hover:bg-red-600 text-white border-red-700' : 'bg-slate-700 hover:bg-slate-600 text-white border-slate-900'}`}>
                                                 {isRecording ? <><Icons.Square className="w-5 h-5" /> Stop Recording</> : <><Icons.Video className="w-6 h-6" /> Start Video Recording</>}
                                             </button>
-                                            <button onClick={stopCam} className="mt-4 text-gray-500 hover:text-white text-sm font-medium">Cancel / Turn Off Camera</button>
+                                            <div className="flex gap-4 justify-center mt-4">
+                                                <button onClick={toggleCamera} className="text-gray-400 hover:text-white flex items-center gap-2 border border-gray-600 px-3 py-1 rounded">
+                                                    <Icons.RefreshCw className="w-4 h-4" /> Switch Camera
+                                                </button>
+                                                <button onClick={stopCam} className="text-gray-500 hover:text-red-400 text-sm font-medium border border-transparent px-3 py-1">
+                                                    Close Camera
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
