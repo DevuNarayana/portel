@@ -2058,7 +2058,8 @@
                 // Initialize Socket
                 socketRef.current = io(SERVER_URL);
                 const socket = socketRef.current;
-                const roomId = batch.id;
+                // Fix: Join the specific student's room, not just the batch room
+                const roomId = `${batch.id}_${student.id}`;
 
                 socket.emit('join-room', roomId, 'assessor');
 
@@ -2109,7 +2110,7 @@
                     socket.disconnect();
                     if (peerRef.current) peerRef.current.close();
                 };
-            }, [batch.id]);
+            }, [batch.id, student.id]);
 
             // Add Local Stream to Peer Connection
             useEffect(() => {
