@@ -3864,36 +3864,33 @@
             };
 
             // Camera Functions
-            const startCam = async (modeOverride = null) => {
-                const targetMode = modeOverride || facingMode;
+            const startCam = async () => {
                 stopCam(); // Cleanup
 
-                // Fix: Wait 500ms for hardware to fully release
+                // Wait 500ms for hardware to fully release
                 await new Promise(r => setTimeout(r, 500));
 
-                // 1. Check for Secure Context
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                    alert("Camera Error: Secure Context (HTTPS) required. Use the Vercel/Render HTTPS link.");
+                    alert("Camera Error: Secure Context (HTTPS) required.");
                     return;
                 }
 
                 try {
+                    // Force Back Camera with Standard Resolution (Fixes NotReadableError on high-res cams)
                     const stream = await navigator.mediaDevices.getUserMedia({
-                        video: { facingMode: targetMode },
+                        video: {
+                            facingMode: { ideal: "environment" },
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 }
+                        },
                         audio: true
                     });
                     mediaStreamRef.current = stream;
                     setIsCamActive(true);
                 } catch (err) {
-                    console.warn(`Camera failed (${targetMode})`, err);
-                    alert(`Camera Error (${targetMode}): ${err.name}.\nWait a moment and try switching again.`);
+                    console.warn(`Camera failed`, err);
+                    alert(`Back Camera Error: ${err.name}.\n${err.message}\nPlease close other tabs/apps.`);
                 }
-            };
-
-            const toggleCamera = () => {
-                const newMode = facingMode === 'environment' ? 'user' : 'environment';
-                setFacingMode(newMode);
-                startCam(newMode);
             };
 
             const stopCam = () => {
@@ -4067,14 +4064,7 @@
                                             <button onClick={toggleRecording} className={`py-4 rounded-xl font-bold flex items-center justify-center gap-3 shadow-xl transition-all hover:-translate-y-1 active:scale-95 border-b-4 ${isRecording ? 'bg-red-500 hover:bg-red-600 text-white border-red-700' : 'bg-slate-700 hover:bg-slate-600 text-white border-slate-900'}`}>
                                                 {isRecording ? <><Icons.Square className="w-5 h-5" /> Stop Recording</> : <><Icons.Video className="w-6 h-6" /> Start Video Recording</>}
                                             </button>
-                                            <div className="flex gap-4 justify-center mt-4">
-                                                <button onClick={toggleCamera} className="text-gray-400 hover:text-white flex items-center gap-2 border border-gray-600 px-3 py-1 rounded">
-                                                    <Icons.RefreshCw className="w-4 h-4" /> Switch Camera
-                                                </button>
-                                                <button onClick={stopCam} className="text-gray-500 hover:text-red-400 text-sm font-medium border border-transparent px-3 py-1">
-                                                    Close Camera
-                                                </button>
-                                            </div>
+                                            <button onClick={stopCam} className="mt-4 text-gray-500 hover:text-white text-sm font-medium w-full">Cancel / Turn Off Camera</button>
                                         </div>
                                     </div>
                                 </div>
