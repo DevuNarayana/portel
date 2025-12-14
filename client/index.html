@@ -3766,7 +3766,21 @@
 
             if (!selectedStudent) return (
                 <div>
-                    <button onClick={() => setExamType(null)} className="mb-4 text-indigo-600 font-medium flex items-center gap-1"><Icons.ChevronDown className="rotate-90" /> Back</button>
+                    <div className="flex justify-between items-center mb-4">
+                        <button onClick={() => setExamType(null)} className="text-indigo-600 font-medium flex items-center gap-1"><Icons.ChevronDown className="rotate-90" /> Back</button>
+                        <button onClick={async () => {
+                            const btn = document.getElementById('refresh-btn');
+                            if (btn) btn.innerText = 'Syncing...';
+                            await window.Utils.downloadFromCloud(true);
+                            if (btn) btn.innerText = 'Refresh Results';
+                            // Force update by toggling a dummy state or just reliable on React re-render from localStorage? 
+                            // React won't re-render unless state changes. Utils.getResponses() is outside state.
+                            // We need to force update.
+                            setStudents([...students]);
+                        }} id="refresh-btn" className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3 py-1 rounded text-sm font-bold flex items-center gap-2 border border-indigo-200">
+                            <Icons.RefreshCw className="w-4 h-4" /> Refresh Results
+                        </button>
+                    </div>
                     <h3 className="text-xl font-bold mb-4">{selectedBatch.name} - {examType} Results</h3>
                     <div className="bg-white rounded overflow-hidden shadow">
                         {students.map((s, i) => {
