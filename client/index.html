@@ -145,6 +145,12 @@
                                     return item;
                                 });
 
+                                // FIX: Save generated IDs IMMEDIATELY before upload to prevent race conditions
+                                if (modified) {
+                                    localStorage.setItem(key, JSON.stringify(items));
+                                    console.log(`Auto-assigned IDs for ${key} (Pre-Upload)`);
+                                }
+
                                 // Perform upload
                                 const res = await fetch(`${SERVER_URL}/api/sync/${route}`, {
                                     method: 'POST',
@@ -154,11 +160,9 @@
                                     },
                                     body: JSON.stringify(items)
                                 });
-                                // Save back sanitized data if we fixed anything
-                                if (modified) {
-                                    localStorage.setItem(key, JSON.stringify(items));
-                                    console.log(`Auto-repaired missing IDs for ${key}`);
-                                }
+
+                                // (Double check local storage didn't change? No, we trust the merge logic else where)
+                                // If successful, we are good.
 
                                 if (!res.ok) {
                                     const errText = await res.text();
@@ -3666,6 +3670,7 @@
             const [examType, setExamType] = useState(null);
             const [students, setStudents] = useState([]);
             const [selectedStudent, setSelectedStudent] = useState(null);
+            const [allResponses, setAllResponses] = useState([]); // State for reliable updates
 
             // Filters & Data
             const [sscList, setSscList] = useState([]);
@@ -3680,6 +3685,7 @@
                 setSscList(window.Utils.getSSC());
                 setQpList(window.Utils.getQPs());
                 setAllQPapers(window.Utils.getQuestionPapers());
+                setAllResponses(window.Utils.getResponses()); // Load initially
             }, []);
 
             const loadResults = (type) => {
@@ -3781,10 +3787,10 @@
                             if (btn) btn.innerText = 'Syncing...';
                             await window.Utils.downloadFromCloud(true);
                             if (btn) btn.innerText = 'Refresh Results';
-                            // Force update by toggling a dummy state or just reliable on React re-render from localStorage? 
-                            // React won't re-render unless state changes. Utils.getResponses() is outside state.
-                            // We need to force update.
-                            setStudents([...students]);
+
+                            // Reliable Update: Refresh responses state
+                            setAllResponses(window.Utils.getResponses());
+                            setStudents([...students]); // Force re-render just in case
                         }} id="refresh-btn" className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-3 py-1 rounded text-sm font-bold flex items-center gap-2 border border-indigo-200">
                             <Icons.RefreshCw className="w-4 h-4" /> Refresh Results
                         </button>
@@ -3792,7 +3798,7 @@
                     <h3 className="text-xl font-bold mb-4">{selectedBatch.name} - {examType} Results</h3>
                     <div className="bg-white rounded overflow-hidden shadow">
                         {students.map((s, i) => {
-                            const hasResponse = window.Utils.getResponses().some(r => r.studentId === s.id && r.examType === examType);
+                            const hasResponse = allResponses.some(r => r.studentId === s.id && r.examType === examType);
                             return (
                                 <div key={s.id} className={`p-4 border-b flex justify-between items-center hover:opacity-90 transition-opacity ${hasResponse ? 'bg-green-50 border-green-100 text-green-900' : 'bg-red-50 border-red-100 text-red-900'}`}>
                                     <div className="flex items-center gap-2">
