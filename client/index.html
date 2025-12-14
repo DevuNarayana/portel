@@ -3864,14 +3864,27 @@
 
             // Camera Functions
             const startCam = async () => {
+                // 1. Check for Secure Context (HTTPS or Localhost)
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    alert("Camera Error: Secure Context (HTTPS) required. If you are on mobile using IP address, this will not work. Please use the Vercel/Render HTTPS link.");
+                    return;
+                }
+
                 try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                    // 2. Prefer Rear Camera for Assessor
+                    const constraints = {
+                        video: { facingMode: { ideal: "environment" } }, // Try Rear Camera first
+                        audio: true
+                    };
+
+                    const stream = await navigator.mediaDevices.getUserMedia(constraints);
                     mediaStreamRef.current = stream;
-                    // Note: videoRef is null here because isCamActive is false. 
-                    // The useEffect above handles the assignment once renders.
+
+                    // Trigger Re-render to attach video in useEffect
                     setIsCamActive(true);
                 } catch (err) {
-                    alert("Could not access camera: " + err.message);
+                    console.error("Camera Error:", err);
+                    alert(`Camera Access Failed: ${err.name} - ${err.message}. \nCheck browser permissions.`);
                 }
             };
 
