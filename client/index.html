@@ -3950,15 +3950,34 @@
                 const responses = window.Utils.getResponses();
                 let resp = responses.find(r => r.studentId === student.id && r.examType === examType);
                 if (!resp) {
-                    resp = { studentId: student.id, examType, evidence: [], answers: {}, assessorMarks: {} };
+                    // ID REQUIRED FOR SERVER SYNC
+                    resp = {
+                        id: window.Utils.generateId(),
+                        studentId: student.id,
+                        examType,
+                        evidence: [],
+                        answers: {},
+                        assessorMarks: {}
+                    };
                     responses.push(resp);
+                } else if (!resp.id) {
+                    resp.id = window.Utils.generateId(); // backfill ID
                 }
-                resp.evidence = newEvidence;
-                localStorage.setItem(DB_KEYS.RESPONSES, JSON.stringify(responses));
 
-                // SYNC TO CLOUD: Immediately upload response so Admin sees it
-                window.Utils.uploadToCloud(true).then(() => {
-                    console.log("Evidence Synced to Cloud");
+                resp.evidence = newEvidence;
+
+                // Safe Local Save
+                try {
+                    localStorage.setItem(DB_KEYS.RESPONSES, JSON.stringify(responses));
+                } catch (err) {
+                    console.error("Local Storage Full!", err);
+                    alert("Warning: Local Storage Full. Uploading to Cloud only.");
+                }
+
+                // DIRECT CLOUD SYNC: Bypass full upload, send just this item
+                window.Utils.saveToCloud('responses', resp).then(ok => {
+                    if (ok) console.log("Evidence Synced to Cloud directly");
+                    else console.error("Direct Sync Failed");
                 }).catch(err => console.error("Sync Failed", err));
 
                 alert(type === 'MANUAL_CAPTURE_PHOTO' ? 'Photo Captured! (Syncing...)' : 'Video Saved! (Syncing...)');
@@ -3971,14 +3990,17 @@
 
                 if (idx === -1) {
                     // Create if not exists (e.g. starting fresh manual grade)
-                    responses.push({
+                    const newResp = {
+                        id: window.Utils.generateId(),
                         studentId: student.id,
                         examType,
                         evidence,
                         answers, // might be empty for manual
                         assessorMarks: grades
-                    });
+                    };
+                    responses.push(newResp);
                 } else {
+                    if (!responses[idx].id) responses[idx].id = window.Utils.generateId(); // backfill
                     responses[idx].assessorMarks = grades;
                     responses[idx].evidence = evidence; // Ensure evidence is synced
 
@@ -3987,10 +4009,15 @@
                     responses[idx].totalScore = total;
                 }
 
-                localStorage.setItem(DB_KEYS.RESPONSES, JSON.stringify(responses));
+                try {
+                    localStorage.setItem(DB_KEYS.RESPONSES, JSON.stringify(responses));
+                } catch (e) {
+                    console.error("Storage Full", e);
+                }
 
-                // SYNC TO CLOUD
-                window.Utils.uploadToCloud(true).catch(console.error);
+                // DIRECT SYNC
+                const currentResp = idx === -1 ? responses[responses.length - 1] : responses[idx];
+                window.Utils.saveToCloud('responses', currentResp).catch(console.error);
 
                 alert("Grades Saved Successfully! (Synced)");
             };
@@ -4013,11 +4040,17 @@
                 const responses = window.Utils.getResponses();
                 const idx = responses.findIndex(r => r.studentId === student.id && r.examType === examType);
                 if (idx >= 0) {
+                    if (!responses[idx].id) responses[idx].id = window.Utils.generateId(); // backfill
                     responses[idx].evidence = []; // Clear evidence
-                    localStorage.setItem(DB_KEYS.RESPONSES, JSON.stringify(responses));
 
-                    // SYNC TO CLOUD
-                    window.Utils.uploadToCloud(true).catch(console.error);
+                    try {
+                        localStorage.setItem(DB_KEYS.RESPONSES, JSON.stringify(responses));
+                    } catch (e) {
+                        console.error("Storage Full", e);
+                    }
+
+                    // DIRECT SYNC
+                    window.Utils.saveToCloud('responses', responses[idx]).catch(console.error);
                 }
 
                 setEvidence([]); // Clear UI
