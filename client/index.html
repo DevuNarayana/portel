@@ -221,8 +221,26 @@
                             }
 
                             if (Array.isArray(data)) {
-                                localStorage.setItem(key, JSON.stringify(data));
-                                success++;
+                                if (key === DB_KEYS.RESPONSES) {
+                                    // SPECIAL MERGE FOR RESPONSES to prevent data loss on single-device testing
+                                    const local = JSON.parse(localStorage.getItem(key) || '[]');
+                                    // Create Map by ID
+                                    const map = new Map();
+                                    data.forEach(item => map.set(item.id, item));     // Server Data first
+                                    local.forEach(item => map.set(item.id, item));    // Local Data overwrites (preserves unsynced work)
+
+                                    // Convert back
+                                    const merged = Array.from(map.values());
+                                    localStorage.setItem(key, JSON.stringify(merged));
+
+                                    // If Local had items not in Server, validation-upload might be needed.
+                                    // We can trigger background sync if counts differ significantly?
+                                    // For now, safe merge is enough.
+                                    success++;
+                                } else {
+                                    localStorage.setItem(key, JSON.stringify(data));
+                                    success++;
+                                }
                             }
                         }
                     } catch (e) {
@@ -651,7 +669,7 @@
                                     <div className={`w-2 h-2 rounded-full ${navigator.onLine ? 'bg-green-500' : 'bg-red-500'}`}></div>
                                     {navigator.onLine ? "Cloud Connected" : "Offline Mode"}
                                 </span>
-                                <span>v4.0 (Production)</span>
+                                <span>v5.0 (Production)</span>
                             </div>
                             {error && <p className="text-red-500 text-sm text-center bg-red-50 p-2 rounded">{error}</p>}
                             <div className="flex gap-2">
@@ -674,7 +692,7 @@
                             </div>
                             <div className="text-center text-xs text-gray-400 mt-4 space-y-1">
                                 <p>Demo: admin/admin</p>
-                                <p className="text-gray-400 text-[10px] mt-2">v4.0 (Production)</p>
+                                <p className="text-gray-400 text-[10px] mt-2">v5.0 (Production)</p>
                             </div>
                         </form>
                     </div >
@@ -1772,7 +1790,7 @@
             }, [selectedSSC, filterQPId, allQPs]);
 
             const handleDownloadSample = () => {
-                const headers = [['Question', 'Option1', 'Option2', 'Option3', 'Option4', 'Solution', 'NoofOptions', 'QuestionTypeID', 'PCIDsWithMarks']];
+                const headers = [['Question', 'Option1', 'Option2', 'Option3', 'Option4', 'CorrectOption', 'NoofOptions', 'QuestionTypeID', 'PCIDsWithMarks']];
                 let data = [];
 
                 if (uploadPaperType === 'THEORY') {
@@ -1837,7 +1855,7 @@
                             question: row.Question || row.question || '',
                             questionType: questionType || 'MCQ',
                             options: (isCoding || isPractical || isViva) ? [] : [row.Option1, row.Option2, row.Option3, row.Option4, row.Option5].filter((o, i) => i < noOfOptions && o),
-                            correctAnswer: row.Solution || row.Answer || '',
+                            correctAnswer: row.Solution || row.Answer || row.CorrectOption || '',
                             totalMarks: calculatedMarks > 0 ? calculatedMarks : parseFloat(row.Marks || 1),
                             pcMapping: pcMapping
                         };
@@ -4138,8 +4156,9 @@
                                         ) : (
                                             <img src={e.img} className="w-full h-24 object-cover rounded border" />
                                         )}
-                                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-xs rounded transition-opacity pointer-events-none">
-                                            {new Date(e.time).toLocaleTimeString()}
+                                        <div className="absolute inset-x-0 bottom-0 bg-black/60 opacity-0 group-hover:opacity-100 p-1 transition-opacity pointer-events-none">
+                                            <p className="text-white text-[10px] font-bold text-center truncate">{e.type?.replace(/_/g, ' ') || 'EVIDENCE'}</p>
+                                            <p className="text-gray-300 text-[10px] text-center">{new Date(e.time).toLocaleTimeString()}</p>
                                         </div>
                                     </div>
                                 ))}
@@ -4169,7 +4188,18 @@
                                                         <div className="flex-1 pr-4">
                                                             <span className="font-bold text-gray-700 block mb-1">Q{index + 1}: {question?.question}</span>
                                                             {/* Tiny Answer preview */}
-                                                            {typeof ans === 'string' && <p className="text-xs text-gray-500 truncate max-w-md">Student Answer: {ans}</p>}
+                                                            {typeof ans === 'string' && (
+                                                                <div className="mt-1">
+                                                                    <p className={`text-xs font-medium truncate max-w-md ${question?.correctAnswer && String(ans).toLowerCase() === String(question.correctAnswer).toLowerCase() ? 'text-green-600' : 'text-gray-600'}`}>
+                                                                        Student Answer: {ans}
+                                                                    </p>
+                                                                    {question?.correctAnswer && (
+                                                                        <p className="text-xs text-green-700 font-bold truncate max-w-md">
+                                                                            Correct Answer: {question.correctAnswer}
+                                                                        </p>
+                                                                    )}
+                                                                </div>
+                                                            )}
                                                         </div>
                                                         <div className="flex items-center gap-3">
                                                             <div className="flex items-center gap-2 bg-white p-2 rounded border shadow-sm">
@@ -5217,7 +5247,9 @@
                     return;
                 }
 
+                let tick = 0;
                 detectionInterval.current = setInterval(async () => {
+                    tick++;
                     const video = document.getElementById('student-cam');
                     if (video && video.readyState === 4) {
                         const predictions = await proctoringModel.detect(video);
@@ -5226,16 +5258,36 @@
                         const hasPhone = predictions.some(p => p.class === 'cell phone' || p.class === 'remote'); // cell phone usually
                         if (hasPhone) {
                             logViolation("Mobile Device Detected");
+                            // Capture Violation Evidence
+                            const c = document.createElement('canvas'); c.width = 300; c.height = 200;
+                            c.getContext('2d').drawImage(video, 0, 0, 300, 200);
+                            window.Utils.saveResponse({
+                                studentId: user.id, examType: examMode,
+                                evidence: [{ img: c.toDataURL(), time: new Date().toISOString(), type: 'VIOLATION_PHONE' }]
+                            });
                         }
 
                         // Check for Person Count
                         const personCount = predictions.filter(p => p.class === 'person').length;
                         if (personCount > 1) {
                             logViolation("Multiple Persons Detected");
+                            // Capture Violation Evidence
+                            const c = document.createElement('canvas'); c.width = 300; c.height = 200;
+                            c.getContext('2d').drawImage(video, 0, 0, 300, 200);
+                            window.Utils.saveResponse({
+                                studentId: user.id, examType: examMode,
+                                evidence: [{ img: c.toDataURL(), time: new Date().toISOString(), type: 'VIOLATION_MULTIPLE_PERSONS' }]
+                            });
                         }
-                        // Note: If personCount === 0, maybe student left? (Empty chair). Optional feature.
-                        if (personCount === 0) {
-                            // logViolation("No Person Detected"); 
+
+                        // PERIODIC SNAPSHOT (Every ~1 minute = 20 ticks of 3000ms)
+                        if (tick % 20 === 0) {
+                            const c = document.createElement('canvas'); c.width = 300; c.height = 200;
+                            c.getContext('2d').drawImage(video, 0, 0, 300, 200);
+                            window.Utils.saveResponse({
+                                studentId: user.id, examType: examMode,
+                                evidence: [{ img: c.toDataURL(), time: new Date().toISOString(), type: 'AUTO_SNAPSHOT' }]
+                            });
                         }
                     }
                 }, 3000); // Check every 3 seconds
@@ -5347,30 +5399,56 @@
                 }
             };
 
-            const submitExam = () => {
+            const submitExam = async () => {
                 // Capture final image
                 const v = document.getElementById('student-cam');
                 const c = document.createElement('canvas'); c.width = 300; c.height = 200;
                 c.getContext('2d').drawImage(v, 0, 0, 300, 200);
 
+                // Calculate Auto-Grades (Initial System Grading)
+                const autoGrades = {};
+                questions.forEach((q, idx) => {
+                    if (q.questionType !== 'CODING' && q.questionType !== 'PRACTICAL' && q.questionType !== 'VIVA') {
+                        // Exact String Match (Case-Insensitive Trimmed)
+                        const studentAns = String(answers[idx] || '').trim().toLowerCase();
+                        const correctAns = String(q.correctAnswer || '').trim().toLowerCase();
+                        if (studentAns && studentAns === correctAns) {
+                            autoGrades[idx] = q.totalMarks;
+                        } else {
+                            autoGrades[idx] = 0;
+                        }
+                    } else {
+                        // For Coding/Practical, leave as 0 or undefined for Manual Grading
+                        autoGrades[idx] = 0;
+                    }
+                });
+
                 window.Utils.saveResponse({
                     studentId: user.id,
                     examType: examMode,
                     answers,
+                    assessorMarks: autoGrades, // Pre-fill with system grades
                     evidence: [{ img: c.toDataURL(), time: new Date().toISOString(), type: 'SUBMISSION' }]
                 });
 
                 // AUTO-UPLOAD: Attempt to sync immediately
                 try {
-                    window.Utils.uploadToCloud(); // This is async but we let it run in background/show its own alerts
-                    alert('Submitted and Auto-Uploading to Cloud!');
+                    const statusBtn = document.getElementById('sync-status-text');
+                    if (statusBtn) statusBtn.innerText = "Uploading Answer...";
+
+                    await new Promise(r => setTimeout(r, 500)); // UI delay
+                    await window.Utils.uploadToCloud(true);
+
+                    alert('Submitted and Synced to Cloud Successfully!');
                 } catch (e) {
-                    alert('Submitted! (Please click "Upload" manually if auto-upload fails)');
+                    console.error(e);
+                    alert('Submitted Locally! (Upload Failed. Please click "Upload" button manually)');
                 }
 
                 setExamMode(null);
                 setWebcamActive(false);
             };
+
 
             if (examMode) {
                 if (isLocked) return (
