@@ -151,6 +151,36 @@
                                     console.log(`Auto-assigned IDs for ${key} (Pre-Upload)`);
                                 }
 
+                                // REHYDRATION: Check for offloaded images in IndexedDB
+                                if (route === 'responses' || route === 'manual_captures') {
+                                    for (let i = 0; i < items.length; i++) {
+                                        const item = items[i];
+                                        if (item.evidence && Array.isArray(item.evidence)) {
+                                            for (let j = 0; j < item.evidence.length; j++) {
+                                                const ev = item.evidence[j];
+                                                if (ev.storage === 'indexeddb' && ev.img) {
+                                                    try {
+                                                        const blob = await VideoDB.getVideo(ev.img);
+                                                        if (blob) {
+                                                            const base64 = await new Promise((resolve) => {
+                                                                const reader = new FileReader();
+                                                                reader.onloadend = () => resolve(reader.result);
+                                                                reader.readAsDataURL(blob);
+                                                            });
+                                                            // Replace key with full data for upload
+                                                            items[i].evidence[j] = { ...ev, img: base64 };
+                                                            /* Note: We do NOT delete from IndexedDB here until we confirm upload success.
+                                                               Actually, we keep it in IndexedDB for local viewing too. */
+                                                        }
+                                                    } catch (err) {
+                                                        console.error("Failed to rehydrate image", err);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
                                 // Perform upload
                                 const res = await fetch(`${SERVER_URL}/api/sync/${route}`, {
                                     method: 'POST',
@@ -223,6 +253,28 @@
                             if (Array.isArray(data)) {
                                 if (key === DB_KEYS.RESPONSES) {
                                     // SPECIAL MERGE FOR RESPONSES to prevent data loss on single-device testing
+
+                                    // PRE-PROCESS: Offload incoming images to IndexedDB
+                                    // This prevents QuotaExceededError when pulling large history
+                                    for (let i = 0; i < data.length; i++) {
+                                        const item = data[i];
+                                        if (item.evidence && Array.isArray(item.evidence)) {
+                                            for (let j = 0; j < item.evidence.length; j++) {
+                                                const ev = item.evidence[j];
+                                                if (ev.img && ev.img.startsWith('data:image')) {
+                                                    try {
+                                                        const blob = window.Utils.base64ToBlob(ev.img);
+                                                        const key = `ev_dl_${item.id}_${j}_${Date.now()}`;
+                                                        await VideoDB.saveVideo(key, blob);
+                                                        data[i].evidence[j] = { ...ev, img: key, storage: 'indexeddb' };
+                                                    } catch (e) {
+                                                        console.error("Failed to offload downloaded image", e);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
                                     const local = JSON.parse(localStorage.getItem(key) || '[]');
                                     // Create Map by ID
                                     const map = new Map();
@@ -462,24 +514,54 @@
                 localStorage.setItem(DB_KEYS.QUESTION_PAPERS, JSON.stringify(list));
             },
             getResponses: () => JSON.parse(localStorage.getItem(DB_KEYS.RESPONSES) || '[]'),
-            saveResponse: (response) => {
-                const list = window.Utils.getResponses();
-                const existing = list.findIndex(r => r.studentId === response.studentId && r.examType === response.examType);
-                if (existing >= 0) {
-                    const old = list[existing];
-                    // Smart Merge: Append evidence if new exists
-                    let newEvidence = old.evidence || [];
-                    if (response.evidence) {
-                        newEvidence = [...newEvidence, ...response.evidence];
-                    }
-                    list[existing] = { ...old, ...response, evidence: newEvidence };
+            base64ToBlob: (base64) => {
+                const parts = base64.split(';base64,');
+                const contentType = parts[0].split(':')[1];
+                const raw = window.atob(parts[1]);
+                const rawLength = raw.length;
+                const uInt8Array = new Uint8Array(rawLength);
+                for (let i = 0; i < rawLength; ++i) {
+                    uInt8Array[i] = raw.charCodeAt(i);
                 }
-                else list.push(response);
+                return new Blob([uInt8Array], { type: contentType });
+            },
+
+            saveResponse: async (response) => {
                 try {
+                    // MIGRATION TO INDEXEDDB FOR IMAGES
+                    if (response.evidence && Array.isArray(response.evidence)) {
+                        for (let i = 0; i < response.evidence.length; i++) {
+                            const ev = response.evidence[i];
+                            // If it's a base64 string (starts with data:image), offload it
+                            if (ev.img && ev.img.startsWith('data:image')) {
+                                const blob = window.Utils.base64ToBlob(ev.img);
+                                const key = `ev_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                                await VideoDB.saveVideo(key, blob); // reusing generic Method
+                                response.evidence[i] = { ...ev, img: key, storage: 'indexeddb' };
+                            }
+                        }
+                    }
+
+                    const list = window.Utils.getResponses();
+                    const existing = list.findIndex(r => r.studentId === response.studentId && r.examType === response.examType);
+                    if (existing >= 0) {
+                        const old = list[existing];
+                        let newEvidence = old.evidence || [];
+                        if (response.evidence) {
+                            newEvidence = [...newEvidence, ...response.evidence];
+                        }
+                        list[existing] = { ...old, ...response, evidence: newEvidence };
+                    }
+                    else list.push(response);
+
                     localStorage.setItem(DB_KEYS.RESPONSES, JSON.stringify(list));
+
                 } catch (e) {
-                    console.error("Storage Full", e);
-                    alert("Storage Full! Evidence may not be saved. Please contact Assessor.");
+                    console.error("Storage Error", e);
+                    // Fallback to alert if IndexedDB fails or something else is wrong
+                    if (e.name === 'QuotaExceededError') {
+                        alert("Storage Full! Please contact support.");
+                    }
                 }
             },
             authenticateAssessor: (username, password) => {
@@ -3879,10 +3961,25 @@
                 }
             }, [isCamActive]); // Depend on isCamActive
 
-            const loadStudentResponse = (s) => {
+            const loadStudentResponse = async (s) => {
                 const responses = window.Utils.getResponses();
                 const resp = responses.find(r => r.studentId === s.id && r.examType === examType);
-                setEvidence(resp?.evidence || []);
+
+                let evList = resp?.evidence || [];
+                // RESOLVE INDEXEDDB IMAGES
+                const resolvedEvidence = await Promise.all(evList.map(async (e) => {
+                    if (e.storage === 'indexeddb' && e.img) {
+                        try {
+                            const blob = await VideoDB.getVideo(e.img);
+                            if (blob) {
+                                return { ...e, img: URL.createObjectURL(blob), originalKey: e.img };
+                            }
+                        } catch (err) { console.error("Failed to load evidence image", err); }
+                    }
+                    return e;
+                }));
+
+                setEvidence(resolvedEvidence);
                 setAnswers(resp?.answers || {});
                 setGrades(resp?.assessorMarks || {});
             };
@@ -3960,15 +4057,13 @@
                 }
             };
 
-            const addEvidence = (data, type) => {
+            const addEvidence = async (data, type) => {
                 const newEvidence = [...evidence, { img: data, time: new Date().toISOString(), type }];
                 setEvidence(newEvidence);
 
-                // Auto-save to local storage
                 const responses = window.Utils.getResponses();
                 let resp = responses.find(r => r.studentId === student.id && r.examType === examType);
                 if (!resp) {
-                    // ID REQUIRED FOR SERVER SYNC
                     resp = {
                         id: window.Utils.generateId(),
                         studentId: student.id,
@@ -3977,28 +4072,21 @@
                         answers: {},
                         assessorMarks: {}
                     };
-                    responses.push(resp);
                 } else if (!resp.id) {
-                    resp.id = window.Utils.generateId(); // backfill ID
+                    resp.id = window.Utils.generateId();
                 }
 
-                resp.evidence = newEvidence;
+                const saveObj = { ...resp, evidence: newEvidence };
 
-                // Safe Local Save
                 try {
-                    localStorage.setItem(DB_KEYS.RESPONSES, JSON.stringify(responses));
+                    await window.Utils.saveResponse(saveObj);
+                    // Use uploadToCloud(true) handles rehydration and sync
+                    window.Utils.uploadToCloud(true);
                 } catch (err) {
-                    console.error("Local Storage Full!", err);
-                    alert("Warning: Local Storage Full. Uploading to Cloud only.");
+                    console.error("Save Failed", err);
                 }
 
-                // DIRECT CLOUD SYNC: Bypass full upload, send just this item
-                window.Utils.saveToCloud('responses', resp).then(ok => {
-                    if (ok) console.log("Evidence Synced to Cloud directly");
-                    else console.error("Direct Sync Failed");
-                }).catch(err => console.error("Sync Failed", err));
-
-                alert(type === 'MANUAL_CAPTURE_PHOTO' ? 'Photo Captured! (Syncing...)' : 'Video Saved! (Syncing...)');
+                alert(type === 'MANUAL_CAPTURE_PHOTO' ? 'Photo Captured! (Saved)' : 'Video Saved!');
             };
 
 
@@ -4043,14 +4131,17 @@
             const deleteEvidence = async () => {
                 if (!confirm("Are you sure you want to DELETE ALL evidence for this student? This action cannot be undone.")) return;
 
-                // 1. Delete Videos from IndexedDB
+                // 1. Delete Videos/Images from IndexedDB
                 for (let e of evidence) {
-                    if (e.type === 'VIDEO_INDEXED_DB' && e.key) {
+                    const key = (e.type === 'VIDEO_INDEXED_DB' && e.key) ? e.key :
+                        (e.storage === 'indexeddb' && (e.originalKey || e.img)) ? (e.originalKey || e.img) : null;
+
+                    if (key && typeof key === 'string') {
                         try {
                             const db = await VideoDB.init();
                             const tx = db.transaction(VideoDB.storeName, 'readwrite');
-                            tx.objectStore(VideoDB.storeName).delete(e.key);
-                        } catch (err) { console.error("Failed to delete video", err); }
+                            tx.objectStore(VideoDB.storeName).delete(key);
+                        } catch (err) { console.error("Failed to delete media", err); }
                     }
                 }
 
