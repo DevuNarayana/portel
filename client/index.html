@@ -5172,8 +5172,8 @@
             useEffect(() => {
                 const checkLock = () => {
                     const status = JSON.parse(localStorage.getItem('se_student_lock_' + user.id) || 'null');
-                    if (status && status.isLocked) {
-                        setIsLocked(true);
+                    if (status) {
+                        setIsLocked(false); // MODIFIED: Never restore lock state
                         setWarnings(status.warnings);
                     }
                 };
@@ -5207,9 +5207,10 @@
                     evidence: [{ img: null, time: new Date().toISOString(), type: 'VIOLATION_LOG', message: msg }]
                 });
 
-                updateLockStatus(newWarnings, newWarnings >= 5);
+                // MODIFIED: Never Lock Exam, just count warnings
+                updateLockStatus(newWarnings, false);
                 if (newWarnings >= 5) {
-                    alert("Maximum violations reached. Exam Locked. Contact Assessor.");
+                    alert(`Warning: You have reached ${newWarnings} violations! The proctor has been notified.`);
                 }
             };
 
