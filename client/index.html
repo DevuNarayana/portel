@@ -4283,15 +4283,34 @@
                                             {filtered.map((e, i) => (
                                                 <div key={i} className="relative group bg-gray-100 rounded overflow-hidden border">
                                                     {e.type.includes('VIDEO') ? (
-                                                        <video src={e.img} controls className="w-full h-32 object-cover bg-black" />
+                                                        <video src={e.img} controls className="w-full h-32 object-cover bg-black"
+                                                            onError={(ev) => {
+                                                                ev.target.style.display = 'none';
+                                                                ev.target.nextSibling.style.display = 'flex';
+                                                            }}
+                                                        />
                                                     ) : (
                                                         <img src={e.img} className="w-full h-32 object-cover transition-transform group-hover:scale-105"
                                                             onClick={() => {
-                                                                const w = window.open("");
-                                                                w.document.write(`<img src="${e.img}" style="max-width:100%"/>`);
+                                                                if (e.img.startsWith('blob:') || e.img.startsWith('data:')) {
+                                                                    const w = window.open("");
+                                                                    w.document.write(`<img src="${e.img}" style="max-width:100%"/>`);
+                                                                } else {
+                                                                    alert("Image not available on this device. Please sync from the source device.");
+                                                                }
+                                                            }}
+                                                            onError={(ev) => {
+                                                                ev.target.style.display = 'none';
+                                                                ev.target.nextSibling.style.display = 'flex';
                                                             }}
                                                         />
                                                     )}
+                                                    {/* Fallback for Error */}
+                                                    <div className="absolute inset-0 hidden flex-col items-center justify-center bg-gray-200 text-gray-500 p-2 text-center">
+                                                        <Icons.XCircle className="w-8 h-8 mb-1" />
+                                                        <span className="text-[10px] font-bold">Media Not Found</span>
+                                                    </div>
+
                                                     <div className="absolute top-0 left-0 bg-black/60 text-white text-[10px] px-2 py-1 rounded-br">
                                                         {new Date(e.time).toLocaleTimeString()}
                                                     </div>
