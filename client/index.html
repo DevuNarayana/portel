@@ -5558,11 +5558,24 @@
                 }
             };
 
+            const [isSubmitting, setIsSubmitting] = useState(false);
+
             const submitExam = async () => {
-                // Capture final image
-                const v = document.getElementById('student-cam');
-                const c = document.createElement('canvas'); c.width = 300; c.height = 200;
-                c.getContext('2d').drawImage(v, 0, 0, 300, 200);
+                if (isSubmitting) return;
+                setIsSubmitting(true);
+
+                // Capture final image (Safe Mode)
+                let finalEvidence = [];
+                try {
+                    const v = document.getElementById('student-cam');
+                    if (v && v.readyState === 4) { // HAVE_ENOUGH_DATA
+                        const c = document.createElement('canvas'); c.width = 300; c.height = 200;
+                        c.getContext('2d').drawImage(v, 0, 0, 300, 200);
+                        finalEvidence.push({ img: c.toDataURL(), time: new Date().toISOString(), type: 'SUBMISSION' });
+                    }
+                } catch (e) {
+                    console.error("Final Capture Failed", e);
+                }
 
                 // Calculate Auto-Grades (Initial System Grading)
                 const autoGrades = {};
@@ -5582,20 +5595,23 @@
                     }
                 });
 
-                window.Utils.saveResponse({
+                const respObj = {
                     studentId: user.id,
                     examType: examMode,
                     answers,
                     assessorMarks: autoGrades, // Pre-fill with system grades
-                    evidence: [{ img: c.toDataURL(), time: new Date().toISOString(), type: 'SUBMISSION' }]
-                });
+                    evidence: finalEvidence
+                };
 
                 // AUTO-UPLOAD: Attempt to sync immediately
                 try {
                     const statusBtn = document.getElementById('sync-status-text');
                     if (statusBtn) statusBtn.innerText = "Uploading Answer...";
 
-                    await new Promise(r => setTimeout(r, 500)); // UI delay
+                    await window.Utils.saveResponse(respObj);
+
+                    // Small delay to ensure UI updates
+                    await new Promise(r => setTimeout(r, 100));
                     await window.Utils.uploadToCloud(true);
 
                     alert('Submitted and Synced to Cloud Successfully!');
@@ -5606,6 +5622,7 @@
 
                 setExamMode(null);
                 setWebcamActive(false);
+                setIsSubmitting(false);
             };
 
 
@@ -5735,7 +5752,10 @@
                                 <button disabled={currentQ === 0} onClick={() => setCurrentQ(c => c - 1)} className="px-4 py-2 border rounded">Prev</button>
                                 {currentQ < questions.length - 1 ?
                                     <button onClick={() => setCurrentQ(c => c + 1)} className="px-4 py-2 bg-indigo-600 text-white rounded">Next</button> :
-                                    <button onClick={submitExam} className="px-4 py-2 bg-green-600 text-white rounded">Submit Exam</button>
+                                    <button onClick={submitExam} disabled={isSubmitting} className={`px-4 py-2 text-white rounded flex items-center gap-2 ${isSubmitting ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}>
+                                        {isSubmitting && <Icons.Loader className="w-4 h-4 animate-spin" />}
+                                        {isSubmitting ? 'Submitting...' : 'Submit Exam'}
+                                    </button>
                                 }
                             </div>
                         </div>
