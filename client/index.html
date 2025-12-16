@@ -5214,7 +5214,7 @@
                 }
             };
 
-            // 60-Second Auto-Capture Loop
+            // 60-Second Auto-Capture Loop (Photos)
             useEffect(() => {
                 if (!examMode || isLocked) {
                     if (autoCaptureInterval.current) clearInterval(autoCaptureInterval.current);
@@ -5224,126 +5224,92 @@
                 autoCaptureInterval.current = setInterval(() => {
                     const video = document.getElementById('student-cam');
                     if (video && video.readyState === 4) {
-                        const c = document.createElement('canvas'); c.width = 320; c.height = 240; // Smaller resolution for storage
+                        const c = document.createElement('canvas'); c.width = 320; c.height = 240;
                         c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
-                        const img = c.toDataURL('image/jpeg', 0.5); // Low quality
+                        const img = c.toDataURL('image/jpeg', 0.5);
 
                         window.Utils.saveResponse({
                             studentId: user.id,
                             examType: examMode,
                             evidence: [{ img, time: new Date().toISOString(), type: 'AUTO_CAPTURE_PHOTO' }]
                         });
-                        // console.log("Auto-Captured Evidence");
                     }
-                }, 10000); // 10 Seconds
+                }, 60000); // MODIFIED: 60 Seconds Interval
 
                 return () => clearInterval(autoCaptureInterval.current);
             }, [examMode, isLocked, user.id]);
 
-            // Full Video Recording Logic
+            // Segmented Video Recording (1-Minute Chunks to prevent data loss)
             useEffect(() => {
+                let recorder = null;
+                let segmentInterval = null;
+                let streamIdx = 0;
+
                 if (!examMode || isLocked || !webcamActive) {
-                    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-                        mediaRecorderRef.current.stop();
-                        setIsRecording(false);
-                    }
-                    return;
+                    return; // Cleanup handled by destructor
                 }
 
-                // Start Recording
-                const startRecording = async () => {
-                    const stream = document.getElementById('student-cam')?.srcObject;
-                    if (stream) {
-                        videoChunksRef.current = [];
-                        recordingExamType.current = examMode; // CAPTURE TYPE AT START
-                        try {
-                            // Try optimal codec, fallback if needed
-                            let options = { mimeType: 'video/webm; codecs=vp8' };
-                            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                                console.warn("VP8 not supported, falling back to default webm");
-                                options = { mimeType: 'video/webm' };
-                            }
+                const stopAndSave = (rec, idx, type) => {
+                    if (rec && rec.state === 'recording') {
+                        rec.requestData(); // Flush last chunk
+                        rec.onstop = () => {
+                            const blob = new Blob(videoChunksRef.current, { type: 'video/webm' });
+                            if (blob.size <= 0) return;
 
-                            const recorder = new MediaRecorder(stream, options);
-                            recorder.ondataavailable = e => { if (e.data.size > 0) videoChunksRef.current.push(e.data); };
-                            recorder.onstop = () => {
-                                setIsRecording(false);
-                                const blob = new Blob(videoChunksRef.current, { type: 'video/webm' });
-                                const savedExamType = recordingExamType.current; // READ CAPTURED TYPE
-                                console.log(`Video Recording Stopped. Size: ${blob.size} bytes. Exam Type: ${savedExamType}`);
+                            const videoKey = `video_${user.id}_${type}_${idx}_${Date.now()}`;
+                            console.log(`Saving Video Segment ${idx}, Size: ${blob.size}`);
 
-                                // SAVE TO INDEXED DB
-                                const videoKey = `video_${user.id}_${savedExamType}`;
-                                VideoDB.saveVideo(videoKey, blob).then(() => {
-                                    console.log("Video saved to IndexedDB:", videoKey);
-                                    if (savedExamType) {
-                                        window.Utils.saveResponse({
-                                            studentId: user.id,
-                                            examType: savedExamType,
-                                            evidence: [{ img: null, time: new Date().toISOString(), type: 'VIDEO_INDEXED_DB', key: videoKey }]
-                                        });
-                                    }
-                                }).catch(err => {
-                                    console.error("IndexedDB Save Failed", err);
-                                    // Fallback to Download
-                                    alert("Browser storage failed. Downloading video manually.");
-                                    const url = URL.createObjectURL(blob);
-                                    const a = document.createElement('a'); a.href = url; a.download = `exam_recording_${user.username}_${new Date().getTime()}.webm`; a.click();
+                            VideoDB.saveVideo(videoKey, blob).then(() => {
+                                window.Utils.saveResponse({
+                                    studentId: user.id,
+                                    examType: type,
+                                    evidence: [{ img: null, time: new Date().toISOString(), type: 'VIDEO_SEGMENT', key: videoKey }]
                                 });
-                                return;
-
-                                /*
-                                // REMOVED: Auto Download Logic
-                                if (blob.size > 100) {... }
-                    */
-
-                                const reader = new FileReader();
-                                reader.onloadend = () => {
-                                    try {
-                                        console.log("Saving Video Evidence for:", savedExamType);
-                                        if (savedExamType) {
-                                            window.Utils.saveResponse({
-                                                studentId: user.id,
-                                                examType: savedExamType,
-                                                evidence: [{ img: reader.result, time: new Date().toISOString(), type: 'AUTO_CAPTURE_VIDEO' }]
-                                            });
-                                        } else {
-                                            console.error("Exam Type lost during recording");
-                                        }
-                                    } catch (err) {
-                                        console.error("Video too large for storage", err);
-                                        // Fallback just in case
-                                        const url = URL.createObjectURL(blob);
-                                        const a = document.createElement('a'); a.href = url; a.download = `exam_recording_${user.username}.webm`; a.click();
-                                    }
-                                };
-                                reader.readAsDataURL(blob);
-                            };
-                            recorder.start(5000); // 5s chunks
-                            mediaRecorderRef.current = recorder;
-                            setIsRecording(true);
-                            console.log("Recording Started");
-                        } catch (e) {
-                            console.error("MediaRecorder Error", e);
-                            alert("Camera Recording Failed: " + e.message);
-                        }
+                                // Attempt Cloud Sync for metadata immediately
+                                window.Utils.uploadToCloud(true);
+                            }).catch(err => console.error("Video Save Failed", err));
+                        };
+                        rec.stop();
                     }
                 };
 
-
-
-                // Poll until stream is ready, then start
-                const attemptStart = setInterval(() => {
+                const startSegment = () => {
                     const stream = document.getElementById('student-cam')?.srcObject;
-                    if (stream && stream.active) {
-                        clearInterval(attemptStart);
-                        startRecording();
-                    } else if (!examMode || isLocked) {
-                        clearInterval(attemptStart);
-                    }
-                }, 500);
+                    if (stream) {
+                        videoChunksRef.current = [];
+                        try {
+                            let options = { mimeType: 'video/webm; codecs=vp8' };
+                            if (!MediaRecorder.isTypeSupported(options.mimeType)) options = { mimeType: 'video/webm' };
 
-                return () => clearInterval(attemptStart);
+                            recorder = new MediaRecorder(stream, options);
+                            recorder.ondataavailable = e => { if (e.data.size > 0) videoChunksRef.current.push(e.data); };
+                            recorder.start(1000); // 1s chunks
+
+                            recordingExamType.current = examMode;
+                            streamIdx++;
+                        } catch (e) { console.error("Recorder Start Failed", e); }
+                    }
+                };
+
+                // Initial Start
+                const waitForStream = setInterval(() => {
+                    if (document.getElementById('student-cam')?.srcObject?.active) {
+                        clearInterval(waitForStream);
+                        startSegment();
+
+                        // Restart every 60 seconds
+                        segmentInterval = setInterval(() => {
+                            if (recorder) stopAndSave(recorder, streamIdx, recordingExamType.current);
+                            startSegment(); // Start NEW segment
+                        }, 60000);
+                    }
+                }, 1000);
+
+                return () => {
+                    clearInterval(waitForStream);
+                    if (segmentInterval) clearInterval(segmentInterval);
+                    if (recorder) stopAndSave(recorder, streamIdx, recordingExamType.current);
+                };
             }, [examMode, webcamActive, isLocked]);
 
             // Security: Block Right Click, Copy, Paste
