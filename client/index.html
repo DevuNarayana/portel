@@ -278,8 +278,32 @@
                                     const local = JSON.parse(localStorage.getItem(key) || '[]');
                                     // Create Map by ID
                                     const map = new Map();
-                                    data.forEach(item => map.set(item.id, item));     // Server Data first
-                                    local.forEach(item => map.set(item.id, item));    // Local Data overwrites (preserves unsynced work)
+                                    // 1. Start with Server Data (Source of Truth for Download)
+                                    data.forEach(item => map.set(item.id, item));
+
+                                    // 2. Smart Merge with Local Data (Preserve Unsynced Work)
+                                    local.forEach(localItem => {
+                                        const serverItem = map.get(localItem.id);
+                                        if (!serverItem) {
+                                            // Item exists only locally (Unsynced work) -> Keep it
+                                            map.set(localItem.id, localItem);
+                                        } else {
+                                            // Conflict: Both have data. Choose the "More Complete" one.
+                                            const sEv = serverItem.evidence?.length || 0;
+                                            const lEv = localItem.evidence?.length || 0;
+                                            const sAns = Object.keys(serverItem.answers || {}).length;
+                                            const lAns = Object.keys(localItem.answers || {}).length;
+
+                                            // Scoring: Evidence (100 pts) > Answers (1 pt)
+                                            // If Local has MORE data, keep Local. Otherwise, accept Server update.
+                                            const sScore = (sEv * 100) + sAns;
+                                            const lScore = (lEv * 100) + lAns;
+
+                                            if (lScore > sScore) {
+                                                map.set(localItem.id, localItem);
+                                            }
+                                        }
+                                    });
 
                                     // Convert back
                                     const merged = Array.from(map.values());
