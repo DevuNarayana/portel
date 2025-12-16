@@ -4172,8 +4172,8 @@
                 alert("Download implementation preserved but hidden for brevity. Use original if restored.");
             };
 
-            // Force Camera to be visible for ALL Assessor modes
-            const showCamera = true;
+            // Force Camera to be visible ONLY for Assessor (who has captureOnly=true)
+            const showCamera = captureOnly;
 
             return (
                 <div>
