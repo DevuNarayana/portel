@@ -5269,7 +5269,7 @@
                 return () => clearInterval(autoCaptureInterval.current);
             }, [examMode, isLocked, user.id]);
 
-            // Full Video Recording Logic (Single Continuous Video)
+            // Full Video Recording Logic (Single Continuous Video with PIP for Viva)
             useEffect(() => {
                 if (!examMode || isLocked || !webcamActive) {
                     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
@@ -5280,11 +5280,64 @@
                 }
 
                 const startRecording = async () => {
-                    const stream = document.getElementById('student-cam')?.srcObject;
-                    if (stream) {
-                        videoChunksRef.current = []; // Clear previous
+                    // VIVA MODE: Picture-in-Picture Recording
+                    if (examMode === 'VivaLive') {
+                        const studentVideo = document.getElementById('student-cam-viva');
+                        const assessorVideoElement = document.querySelector('video[autoplay]:not([id])'); // Remote stream video
+
+                        if (!studentVideo || !assessorVideoElement) {
+                            console.warn("Viva videos not ready for recording");
+                            return;
+                        }
+
+                        // Create canvas for compositing
+                        const canvas = document.createElement('canvas');
+                        canvas.width = 1280;
+                        canvas.height = 720;
+                        const ctx = canvas.getContext('2d');
+
+                        videoChunksRef.current = [];
                         recordingExamType.current = examMode;
+
+                        // Animation loop to composite both streams
+                        let animationId;
+                        const drawFrame = () => {
+                            // Clear canvas
+                            ctx.fillStyle = '#000000';
+                            ctx.fillRect(0, 0, 1280, 720);
+
+                            // Draw student video (main, full canvas)
+                            if (studentVideo.readyState >= 2) {
+                                ctx.save();
+                                // Flip horizontally for natural view
+                                ctx.scale(-1, 1);
+                                ctx.drawImage(studentVideo, -1280, 0, 1280, 720);
+                                ctx.restore();
+                            }
+
+                            // Draw assessor video (overlay, bottom-right, 20% size)
+                            if (assessorVideoElement.readyState >= 2) {
+                                const pipWidth = 256;
+                                const pipHeight = 144;
+                                const pipX = 1280 - pipWidth - 20; // 20px from right
+                                const pipY = 720 - pipHeight - 20; // 20px from bottom
+
+                                // Draw border
+                                ctx.strokeStyle = '#4F46E5';
+                                ctx.lineWidth = 3;
+                                ctx.strokeRect(pipX - 2, pipY - 2, pipWidth + 4, pipHeight + 4);
+
+                                // Draw assessor video
+                                ctx.drawImage(assessorVideoElement, pipX, pipY, pipWidth, pipHeight);
+                            }
+
+                            animationId = requestAnimationFrame(drawFrame);
+                        };
+                        drawFrame();
+
                         try {
+                            // Capture canvas stream
+                            const stream = canvas.captureStream(30); // 30 FPS
                             let options = { mimeType: 'video/webm; codecs=vp8' };
                             if (!MediaRecorder.isTypeSupported(options.mimeType)) {
                                 console.warn("VP8 not supported, falling back to default webm");
@@ -5298,21 +5351,21 @@
 
                             recorder.onstop = () => {
                                 setIsRecording(false);
+                                cancelAnimationFrame(animationId); // Stop animation loop
+
                                 const blob = new Blob(videoChunksRef.current, { type: 'video/webm' });
                                 const savedExamType = recordingExamType.current;
-                                console.log(`Video Finalized. Size: ${blob.size} bytes. Exam Type: ${savedExamType}`);
+                                console.log(`Viva PIP Recording Finalized. Size: ${blob.size} bytes`);
 
-                                // SAVE TO INDEXED DB (Single File)
-                                const videoKey = `video_${user.id}_${savedExamType}`;
+                                const videoKey = `video_${user.id}_${savedExamType}_${Date.now()}`;
                                 VideoDB.saveVideo(videoKey, blob).then(() => {
-                                    console.log("Full Video saved to IndexedDB:", videoKey);
+                                    console.log("Viva PIP video saved to IndexedDB:", videoKey);
                                     if (savedExamType) {
                                         window.Utils.saveResponse({
                                             studentId: user.id,
                                             examType: savedExamType,
                                             evidence: [{ img: null, time: new Date().toISOString(), type: 'VIDEO_INDEXED_DB', key: videoKey }]
                                         });
-                                        // Attempt Cloud Sync
                                         setTimeout(() => window.Utils.uploadToCloud(true), 1000);
                                     }
                                 }).catch(err => {
@@ -5321,29 +5374,90 @@
                                 });
                             };
 
-                            // Record 1-second chunks for smoothness (stored in RAM)
                             recorder.start(1000);
                             mediaRecorderRef.current = recorder;
                             setIsRecording(true);
+                            console.log("Viva PIP Recording Started");
                         } catch (e) {
-                            console.error("MediaRecorder Error", e);
+                            console.error("Viva Recording Error", e);
+                            cancelAnimationFrame(animationId);
+                        }
+                    }
+                    // REGULAR EXAMS: Student-only recording
+                    else {
+                        const stream = document.getElementById('student-cam')?.srcObject;
+                        if (stream) {
+                            videoChunksRef.current = [];
+                            recordingExamType.current = examMode;
+                            try {
+                                let options = { mimeType: 'video/webm; codecs=vp8' };
+                                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                                    console.warn("VP8 not supported, falling back to default webm");
+                                    options = { mimeType: 'video/webm' };
+                                }
+
+                                const recorder = new MediaRecorder(stream, options);
+                                recorder.ondataavailable = e => {
+                                    if (e.data.size > 0) videoChunksRef.current.push(e.data);
+                                };
+
+                                recorder.onstop = () => {
+                                    setIsRecording(false);
+                                    const blob = new Blob(videoChunksRef.current, { type: 'video/webm' });
+                                    const savedExamType = recordingExamType.current;
+                                    console.log(`Video Finalized. Size: ${blob.size} bytes. Exam Type: ${savedExamType}`);
+
+                                    const videoKey = `video_${user.id}_${savedExamType}`;
+                                    VideoDB.saveVideo(videoKey, blob).then(() => {
+                                        console.log("Full Video saved to IndexedDB:", videoKey);
+                                        if (savedExamType) {
+                                            window.Utils.saveResponse({
+                                                studentId: user.id,
+                                                examType: savedExamType,
+                                                evidence: [{ img: null, time: new Date().toISOString(), type: 'VIDEO_INDEXED_DB', key: videoKey }]
+                                            });
+                                            setTimeout(() => window.Utils.uploadToCloud(true), 1000);
+                                        }
+                                    }).catch(err => {
+                                        console.error("IndexedDB Save Failed", err);
+                                        alert("Video Save Failed: " + err.message);
+                                    });
+                                };
+
+                                recorder.start(1000);
+                                mediaRecorderRef.current = recorder;
+                                setIsRecording(true);
+                            } catch (e) {
+                                console.error("MediaRecorder Error", e);
+                            }
                         }
                     }
                 };
 
                 // Poll stream start
                 const attemptStart = setInterval(() => {
-                    const stream = document.getElementById('student-cam')?.srcObject;
-                    if (stream && stream.active) {
-                        clearInterval(attemptStart);
-                        startRecording();
-                    } else if (!examMode || isLocked) {
-                        clearInterval(attemptStart);
+                    if (examMode === 'VivaLive') {
+                        // For viva, wait for both video elements to be ready
+                        const studentVideo = document.getElementById('student-cam-viva');
+                        const assessorVideo = document.querySelector('video[autoplay]:not([id])');
+                        if (studentVideo?.srcObject && assessorVideo?.srcObject) {
+                            clearInterval(attemptStart);
+                            startRecording();
+                        }
+                    } else {
+                        // For regular exams, wait for student camera
+                        const stream = document.getElementById('student-cam')?.srcObject;
+                        if (stream && stream.active) {
+                            clearInterval(attemptStart);
+                            startRecording();
+                        } else if (!examMode || isLocked) {
+                            clearInterval(attemptStart);
+                        }
                     }
                 }, 500);
 
                 return () => clearInterval(attemptStart);
-            }, [examMode, webcamActive, isLocked]);
+            }, [examMode, webcamActive, isLocked, remoteStream]);
 
             // Security: Block Right Click, Copy, Paste
             useEffect(() => {
