@@ -6154,7 +6154,7 @@
 
         // ASSESSOR PORTAL
         const AssessorPortal = ({ user }) => {
-            const [view, setView] = useState('selection'); // selection, dashboard, batches, students, exam_type, capture
+            const [view, setView] = useState('dashboard'); // dashboard, batches, students, exam_type, capture
             const [flowMode, setFlowMode] = useState('MANUAL'); // 'MANUAL' or 'VIVA'
 
             // Workflow State
@@ -6168,24 +6168,10 @@
             const [allQPapers, setAllQPapers] = useState([]);
             const [showVivaLobby, setShowVivaLobby] = useState(false);
 
-            // Selection data
-            const [sscList, setSSCList] = useState([]);
-            const [qpList, setQPList] = useState([]);
-            const [selectedSSC, setSelectedSSC] = useState('');
-            const [selectedQP, setSelectedQP] = useState('');
-            const [selectedBatchId, setSelectedBatchId] = useState('');
-
             useEffect(() => {
                 // Initialize Data
                 setBatches(window.Utils.getBatches());
                 setAllQPapers(window.Utils.getQuestionPapers());
-                setSSCList(window.Utils.getSSC());
-                setQPList(window.Utils.getQPs());
-
-                // Pre-select assessor's assigned values
-                if (user.sscId) setSelectedSSC(user.sscId);
-                if (user.qpId) setSelectedQP(user.qpId);
-                if (user.batchId) setSelectedBatchId(user.batchId);
             }, []);
 
             // Effect to load students when batch changes
@@ -6197,89 +6183,11 @@
 
             if (showVivaLobby) return <VivaLobby batch={selectedBatch || user} onClose={() => setShowVivaLobby(false)} />;
 
-            // VIEW 0: SELECTION INTERFACE
-            if (view === 'selection') {
-                const filteredQPs = qpList.filter(q => !selectedSSC || q.sscId === selectedSSC);
-                const filteredBatches = batches.filter(b => !selectedQP || b.qpId === selectedQP);
-                const selectedBatchObj = batches.find(b => b.id === selectedBatchId);
-                const selectedSSCObj = sscList.find(s => s.id === selectedSSC);
-                const selectedQPObj = qpList.find(q => q.id === selectedQP);
-
-                return (
-                    <div className="p-8">
-                        <h2 className="text-2xl font-bold mb-2 text-gray-800">Assessor Portal</h2>
-                        <p className="text-gray-500 mb-8">Welcome, {user.name}</p>
-
-                        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 max-w-3xl mx-auto">
-                            <h3 className="text-lg font-bold text-gray-700 mb-6">Your Assignment Details</h3>
-
-                            <div className="space-y-6">
-                                <div>
-                                    <label className="block text-sm font-bold text-gray-700 mb-2">Sector Skill Council :</label>
-                                    <select className="w-full p-3 border border-gray-300 rounded-lg text-sm bg-gray-50"
-                                        value={selectedSSC} onChange={e => setSelectedSSC(e.target.value)} disabled>
-                                        <option value="">Select SSC</option>
-                                        {sscList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                                    </select>
-                                </div>
-
-                                <div>
-                                    <label className="block text-sm font-bold text-gray-700 mb-2">Qualification Pack :</label>
-                                    <select className="w-full p-3 border border-gray-300 rounded-lg text-sm bg-gray-50"
-                                        value={selectedQP} onChange={e => setSelectedQP(e.target.value)} disabled>
-                                        <option value="">Select QP</option>
-                                        {filteredQPs.map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
-                                    </select>
-                                </div>
-
-                                <div>
-                                    <label className="block text-sm font-bold text-gray-700 mb-2">Batch :</label>
-                                    <select className="w-full p-3 border border-gray-300 rounded-lg text-sm bg-gray-50"
-                                        value={selectedBatchId} onChange={e => setSelectedBatchId(e.target.value)} disabled>
-                                        <option value="">Select Batch</option>
-                                        {filteredBatches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                                    </select>
-                                </div>
-
-                                {selectedBatchObj && (
-                                    <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4 mt-6">
-                                        <h4 className="font-bold text-indigo-900 mb-2">Batch Information</h4>
-                                        <div className="text-sm text-indigo-800 space-y-1">
-                                            <p><span className="font-medium">Batch:</span> {selectedBatchObj.name}</p>
-                                            <p><span className="font-medium">Center:</span> {selectedBatchObj.trainingCentre || '-'}</p>
-                                            <p><span className="font-medium">Students:</span> {window.Utils.getStudentsByBatch(selectedBatchObj.id).length}</p>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-
-                            <div className="mt-8 flex justify-end">
-                                <button onClick={() => {
-                                    if (!selectedBatchId) {
-                                        alert('No batch assigned. Please contact admin.');
-                                        return;
-                                    }
-                                    setSelectedBatch(batches.find(b => b.id === selectedBatchId));
-                                    setView('dashboard');
-                                }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-lg font-bold shadow-sm transition-colors">
-                                    Continue to Dashboard
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                );
-            }
-
             // VIEW 1: DASHBOARD
             if (view === 'dashboard') {
                 return (
                     <div className="p-8">
-                        <div className="flex justify-between items-center mb-6">
-                            <h2 className="text-2xl font-bold">Assessor Dashboard</h2>
-                            <button onClick={() => setView('selection')} className="text-gray-500 hover:text-gray-700 text-sm flex items-center gap-1">
-                                <Icons.Settings className="w-4 h-4" /> View Assignment
-                            </button>
-                        </div>
+                        <h2 className="text-2xl font-bold mb-6">Assessor Dashboard</h2>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                             <button onClick={() => { setFlowMode('MANUAL'); setView('batches'); }} className="h-48 bg-white rounded shadow hover:shadow-xl transition-all border-l-8 border-indigo-600 flex flex-col items-center justify-center gap-4 group">
                                 <div className="bg-indigo-100 p-4 rounded-full group-hover:bg-indigo-200 transition-colors">
