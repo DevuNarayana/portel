@@ -524,6 +524,24 @@
                 localStorage.setItem(DB_KEYS.STUDENTS, JSON.stringify(list));
             },
             authenticateStudent: (username, password) => window.Utils.getStudents().find(s => String(s.username).trim().toLowerCase() === String(username).trim().toLowerCase() && String(s.password).trim() === String(password).trim()),
+
+            // Assessor Management
+            getAssessors: () => JSON.parse(localStorage.getItem('se_assessors') || '[]'),
+            saveAssessor: (assessor) => {
+                const list = window.Utils.getAssessors();
+                if (!assessor.id) assessor.id = Date.now().toString(36) + Math.random().toString(36).substr(2);
+                if (!assessor.createdAt) assessor.createdAt = new Date().toISOString();
+                list.push(assessor);
+                localStorage.setItem('se_assessors', JSON.stringify(list));
+                window.Utils.saveToCloud('assessors', assessor);
+            },
+            deleteAssessor: (id) => {
+                window.Utils.deleteFromCloud('assessors', id);
+                let list = window.Utils.getAssessors().filter(a => a.id !== id);
+                localStorage.setItem('se_assessors', JSON.stringify(list));
+            },
+            authenticateAssessor: (username, password) => window.Utils.getAssessors().find(a => String(a.username).trim().toLowerCase() === String(username).trim().toLowerCase() && String(a.password).trim() === String(password).trim()),
+
             getQuestionPapers: () => JSON.parse(localStorage.getItem(DB_KEYS.QUESTION_PAPERS) || '[]'),
             saveQuestionPaper: (qp) => {
                 const list = window.Utils.getQuestionPapers();
@@ -870,6 +888,10 @@
                             <button onClick={() => setActiveTab('results')}
                                 className={`w-full flex items-center gap-3 px-4 py-2 rounded-lg transition-colors ${activeTab === 'results' ? 'bg-indigo-600' : 'text-slate-300 hover:bg-slate-700'}`}>
                                 <Icons.Cpu /> <span className="text-sm">Results</span>
+                            </button>
+                            <button onClick={() => setActiveTab('assessors')}
+                                className={`w-full flex items-center gap-3 px-4 py-2 rounded-lg transition-colors ${activeTab === 'assessors' ? 'bg-indigo-600' : 'text-slate-300 hover:bg-slate-700'}`}>
+                                <Icons.UserCheck /> <span className="text-sm">Assessors</span>
                             </button>
                         </div>
 
@@ -3785,6 +3807,226 @@
             );
         };
 
+        // ASSESSORS TAB
+        const AssessorsTab = () => {
+            const [assessors, setAssessors] = useState([]);
+            const [showCreateModal, setShowCreateModal] = useState(false);
+            const [sscList, setSSCList] = useState([]);
+            const [qpList, setQPList] = useState([]);
+            const [batches, setBatches] = useState([]);
+
+            const [newAssessor, setNewAssessor] = useState({
+                name: '',
+                username: '',
+                password: '',
+                sscId: '',
+                qpId: '',
+                batchId: '',
+                status: 'active'
+            });
+
+            useEffect(() => {
+                const load = () => {
+                    setAssessors(window.Utils.getAssessors());
+                    setSSCList(window.Utils.getSSC());
+                    setQPList(window.Utils.getQPs());
+                    setBatches(window.Utils.getBatches());
+                };
+                load();
+                window.addEventListener('cloud-sync-complete', load);
+                return () => window.removeEventListener('cloud-sync-complete', load);
+            }, []);
+
+            const handleSaveAssessor = () => {
+                if (!newAssessor.name || !newAssessor.username || !newAssessor.password || !newAssessor.batchId) {
+                    alert('Please fill all required fields');
+                    return;
+                }
+                window.Utils.saveAssessor(newAssessor);
+                setAssessors(window.Utils.getAssessors());
+                setShowCreateModal(false);
+                setNewAssessor({ name: '', username: '', password: '', sscId: '', qpId: '', batchId: '', status: 'active' });
+                window.Utils.uploadToCloud(true);
+            };
+
+            const handleDelete = (id) => {
+                if (confirm('Delete this assessor?')) {
+                    window.Utils.deleteAssessor(id);
+                    setAssessors(window.Utils.getAssessors());
+                    window.Utils.uploadToCloud(true);
+                }
+            };
+
+            const generateCredentials = () => {
+                const username = `assessor_${Date.now().toString(36).substr(-5)}`;
+                const password = Math.random().toString(36).substr(2, 8);
+                setNewAssessor({ ...newAssessor, username, password });
+            };
+
+            const filteredQPs = qpList.filter(q => !newAssessor.sscId || q.sscId === newAssessor.sscId);
+            const filteredBatches = batches.filter(b => !newAssessor.qpId || b.qpId === newAssessor.qpId);
+
+            return (
+                <div className="animate-fade-in">
+                    <div className="flex items-center gap-2 text-xs text-green-600 mb-2">
+                        <span>Home</span>
+                        <span>/</span>
+                        <span className="text-gray-600">Assessors</span>
+                    </div>
+
+                    <h3 className="text-2xl font-bold mb-6 text-gray-800">Assessors Management</h3>
+
+                    <div className="flex justify-between items-center mb-4">
+                        <div className="text-gray-500 text-sm">Total Assessors: {assessors.length}</div>
+                        <button onClick={() => setShowCreateModal(true)}
+                            className="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-lg font-medium shadow-sm transition-colors flex items-center gap-2">
+                            <Icons.UserPlus className="w-4 h-4" /> Create New Assessor
+                        </button>
+                    </div>
+
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
+                        <table className="w-full text-left border-collapse">
+                            <thead className="bg-gray-50 border-b">
+                                <tr>
+                                    <th className="p-4 font-bold text-gray-600 border-r w-16 text-center">Sr.#</th>
+                                    <th className="p-4 font-bold text-gray-600 border-r">Name</th>
+                                    <th className="p-4 font-bold text-gray-600 border-r">Username</th>
+                                    <th className="p-4 font-bold text-gray-600 border-r">Batch</th>
+                                    <th className="p-4 font-bold text-gray-600 border-r">SSC</th>
+                                    <th className="p-4 font-bold text-gray-600 border-r">QP</th>
+                                    <th className="p-4 font-bold text-gray-600 border-r w-24 text-center">Status</th>
+                                    <th className="p-4 font-bold text-gray-600 w-24 text-center">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                                {assessors.map((assessor, idx) => {
+                                    const batch = batches.find(b => b.id === assessor.batchId);
+                                    const ssc = sscList.find(s => s.id === assessor.sscId);
+                                    const qp = qpList.find(q => q.id === assessor.qpId);
+
+                                    return (
+                                        <tr key={assessor.id} className="hover:bg-gray-50 transition-colors">
+                                            <td className="p-4 border-r text-center text-gray-500">{idx + 1}</td>
+                                            <td className="p-4 border-r">
+                                                <div className="font-bold text-gray-800">{assessor.name}</div>
+                                                <div className="text-xs text-gray-400 mt-1">{new Date(assessor.createdAt).toLocaleDateString()}</div>
+                                            </td>
+                                            <td className="p-4 border-r font-mono text-sm text-gray-700">{assessor.username}</td>
+                                            <td className="p-4 border-r text-gray-600">{batch?.name || '-'}</td>
+                                            <td className="p-4 border-r text-xs text-gray-600">{ssc?.name || '-'}</td>
+                                            <td className="p-4 border-r text-xs text-gray-600">{qp?.name || '-'}</td>
+                                            <td className="p-4 border-r text-center">
+                                                <span className={`px-2 py-1 rounded text-xs font-bold ${assessor.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}`}>
+                                                    {assessor.status}
+                                                </span>
+                                            </td>
+                                            <td className="p-4 text-center">
+                                                <button onClick={() => handleDelete(assessor.id)}
+                                                    className="text-red-500 hover:text-red-700 p-2 hover:bg-red-50 rounded-full transition-colors" title="Delete">
+                                                    <Icons.Trash2 className="w-4 h-4" />
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                                {assessors.length === 0 && (
+                                    <tr>
+                                        <td colSpan="8" className="p-8 text-center text-gray-400">No assessors found. Click "Create New Assessor" to add one.</td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {showCreateModal && (
+                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+                            <div className="bg-white w-full max-w-2xl shadow-2xl rounded-xl overflow-hidden animate-scale-in">
+                                <div className="bg-gray-50 px-8 py-5 flex justify-between items-center border-b">
+                                    <h3 className="text-xl font-bold text-gray-800">Create New Assessor</h3>
+                                    <button onClick={() => setShowCreateModal(false)} className="text-gray-400 hover:text-red-500 transition-colors">
+                                        <Icons.XCircle className="w-6 h-6" />
+                                    </button>
+                                </div>
+                                <div className="p-8 space-y-6">
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-2">Step 1: Select Sector Skill Council</label>
+                                        <select className="w-full p-3 border border-gray-300 rounded-lg text-sm"
+                                            value={newAssessor.sscId} onChange={e => setNewAssessor({ ...newAssessor, sscId: e.target.value, qpId: '', batchId: '' })}>
+                                            <option value="">-- Select SSC --</option>
+                                            {sscList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                        </select>
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-2">Step 2: Select Qualification Pack</label>
+                                        <select className="w-full p-3 border border-gray-300 rounded-lg text-sm"
+                                            value={newAssessor.qpId} onChange={e => setNewAssessor({ ...newAssessor, qpId: e.target.value, batchId: '' })}
+                                            disabled={!newAssessor.sscId}>
+                                            <option value="">-- Select QP --</option>
+                                            {filteredQPs.map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
+                                        </select>
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-2">Step 3: Select Batch</label>
+                                        <select className="w-full p-3 border border-gray-300 rounded-lg text-sm"
+                                            value={newAssessor.batchId} onChange={e => setNewAssessor({ ...newAssessor, batchId: e.target.value })}
+                                            disabled={!newAssessor.qpId}>
+                                            <option value="">-- Select Batch --</option>
+                                            {filteredBatches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                                        </select>
+                                    </div>
+
+                                    <div className="border-t pt-6">
+                                        <h4 className="text-sm font-bold text-gray-700 mb-4">Step 4: Assessor Details & Credentials</h4>
+
+                                        <div className="space-y-4">
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
+                                                <input type="text" className="w-full p-3 border border-gray-300 rounded-lg text-sm"
+                                                    placeholder="Enter assessor name"
+                                                    value={newAssessor.name} onChange={e => setNewAssessor({ ...newAssessor, name: e.target.value })} />
+                                            </div>
+
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div>
+                                                    <label className="block text-sm font-medium text-gray-700 mb-1">Username *</label>
+                                                    <input type="text" className="w-full p-3 border border-gray-300 rounded-lg text-sm font-mono"
+                                                        placeholder="assessor_xxxxx"
+                                                        value={newAssessor.username} onChange={e => setNewAssessor({ ...newAssessor, username: e.target.value })} />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-sm font-medium text-gray-700 mb-1">Password *</label>
+                                                    <input type="text" className="w-full p-3 border border-gray-300 rounded-lg text-sm font-mono"
+                                                        placeholder="password"
+                                                        value={newAssessor.password} onChange={e => setNewAssessor({ ...newAssessor, password: e.target.value })} />
+                                                </div>
+                                            </div>
+
+                                            <button onClick={generateCredentials} type="button"
+                                                className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 border border-indigo-200">
+                                                <Icons.RefreshCw className="w-4 h-4" /> Auto-Generate Credentials
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="bg-gray-50 px-8 py-4 flex justify-end gap-3 border-t">
+                                    <button onClick={() => setShowCreateModal(false)}
+                                        className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors">
+                                        Cancel
+                                    </button>
+                                    <button onClick={handleSaveAssessor}
+                                        className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-bold">
+                                        Create Assessor
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
         // RESULTS TAB
 
 
@@ -4802,9 +5044,10 @@
                             {activeTab === 'questionPapers' && <QuestionPapersTab />}
                             {activeTab === 'batches' && <BatchesTab />}
                             {activeTab === 'results' && <ResultsTab />}
+                            {activeTab === 'assessors' && <AssessorsTab />}
                         </div>
                     </div>
-                </div>
+                </div >
             );
         };
 
