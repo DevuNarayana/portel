@@ -3876,7 +3876,7 @@
 
                     {/* Filters */}
                     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-3 gap-4">
                             <div>
                                 <label className="block text-sm font-bold text-gray-700 mb-2">Sector Skill Council :</label>
                                 <select className="w-full p-3 border border-gray-300 rounded-lg text-sm">
@@ -3889,6 +3889,13 @@
                                 <select className="w-full p-3 border border-gray-300 rounded-lg text-sm">
                                     <option value="">Select QP</option>
                                     {qpList.map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-bold text-gray-700 mb-2">Batch :</label>
+                                <select className="w-full p-3 border border-gray-300 rounded-lg text-sm">
+                                    <option value="">Select Batch</option>
+                                    {batches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                                 </select>
                             </div>
                         </div>
