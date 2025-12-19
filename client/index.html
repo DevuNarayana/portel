@@ -3813,6 +3813,11 @@
             const [qpList, setQPList] = useState([]);
             const [batches, setBatches] = useState([]);
 
+            // Filter state
+            const [filterSSC, setFilterSSC] = useState('');
+            const [filterQP, setFilterQP] = useState('');
+            const [filterBatch, setFilterBatch] = useState('');
+
             const [newAssessor, setNewAssessor] = useState({
                 name: '',
                 username: '',
@@ -3879,21 +3884,24 @@
                         <div className="grid grid-cols-3 gap-4">
                             <div>
                                 <label className="block text-sm font-bold text-gray-700 mb-2">Sector Skill Council :</label>
-                                <select className="w-full p-3 border border-gray-300 rounded-lg text-sm">
+                                <select className="w-full p-3 border border-gray-300 rounded-lg text-sm"
+                                    value={filterSSC} onChange={e => setFilterSSC(e.target.value)}>
                                     <option value="">Select SSC</option>
                                     {sscList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                                 </select>
                             </div>
                             <div>
                                 <label className="block text-sm font-bold text-gray-700 mb-2">Qualification Pack :</label>
-                                <select className="w-full p-3 border border-gray-300 rounded-lg text-sm">
+                                <select className="w-full p-3 border border-gray-300 rounded-lg text-sm"
+                                    value={filterQP} onChange={e => setFilterQP(e.target.value)}>
                                     <option value="">Select QP</option>
                                     {qpList.map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
                                 </select>
                             </div>
                             <div>
                                 <label className="block text-sm font-bold text-gray-700 mb-2">Batch :</label>
-                                <select className="w-full p-3 border border-gray-300 rounded-lg text-sm">
+                                <select className="w-full p-3 border border-gray-300 rounded-lg text-sm"
+                                    value={filterBatch} onChange={e => setFilterBatch(e.target.value)}>
                                     <option value="">Select Batch</option>
                                     {batches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                                 </select>
@@ -3903,7 +3911,18 @@
 
                     <div className="flex justify-between items-center mb-4">
                         <div className="text-gray-500 text-sm">Total Assessors: {assessors.length}</div>
-                        <button onClick={() => setShowCreateModal(true)}
+                        <button onClick={() => {
+                            setNewAssessor({
+                                name: '',
+                                username: '',
+                                password: '',
+                                sscId: filterSSC,
+                                qpId: filterQP,
+                                batchId: filterBatch,
+                                status: 'active'
+                            });
+                            setShowCreateModal(true);
+                        }}
                             className="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-lg font-medium shadow-sm transition-colors flex items-center gap-2">
                             <Icons.UserPlus className="w-4 h-4" /> Create New Assessor
                         </button>
