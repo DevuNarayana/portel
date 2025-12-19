@@ -540,7 +540,33 @@
                 let list = window.Utils.getAssessors().filter(a => a.id !== id);
                 localStorage.setItem('se_assessors', JSON.stringify(list));
             },
-            authenticateAssessor: (username, password) => window.Utils.getAssessors().find(a => String(a.username).trim().toLowerCase() === String(username).trim().toLowerCase() && String(a.password).trim() === String(password).trim()),
+            authenticateAssessor: (username, password) => {
+                // 1. Check New Assessors Table
+                const fromList = window.Utils.getAssessors().find(a =>
+                    String(a.username).trim().toLowerCase() === String(username).trim().toLowerCase() &&
+                    String(a.password).trim() === String(password).trim()
+                );
+                if (fromList) return fromList;
+
+                // 2. Fallback: Check Batches (Legacy / Direct Batch Credentials)
+                const fromBatch = window.Utils.getBatches().find(b =>
+                    String(b.assessorUsername).trim().toLowerCase() === String(username).trim().toLowerCase() &&
+                    String(b.assessorPassword).trim() === String(password).trim()
+                );
+
+                if (fromBatch) {
+                    return {
+                        id: fromBatch.id, // Use batch ID as fallback ID
+                        name: 'Assessor (' + fromBatch.name + ')',
+                        username: fromBatch.assessorUsername,
+                        batchId: fromBatch.id, // Critical for context
+                        sscId: fromBatch.sscId,
+                        qpId: fromBatch.qpId,
+                        role: 'assessor'
+                    };
+                }
+                return null;
+            },
 
             getQuestionPapers: () => JSON.parse(localStorage.getItem(DB_KEYS.QUESTION_PAPERS) || '[]'),
             saveQuestionPaper: (qp) => {
