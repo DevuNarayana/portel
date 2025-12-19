@@ -5271,7 +5271,10 @@
 
             // Full Video Recording Logic (Single Continuous Video with PIP for Viva)
             useEffect(() => {
-                if (!examMode || isLocked || !webcamActive) {
+                // Allow recording for viva even if webcamActive is false (viva manages its own stream)
+                const shouldRecord = examMode && !isLocked && (webcamActive || examMode === 'VivaLive' || examMode === 'VivaWait');
+
+                if (!shouldRecord) {
                     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
                         mediaRecorderRef.current.stop();
                         setIsRecording(false);
