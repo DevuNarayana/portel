@@ -632,13 +632,7 @@
                     }
                 }
             },
-            authenticateAssessor: (username, password) => {
-                // Strict production auth: Match against loaded Batches (which come from Cloud)
-                return window.Utils.getBatches().find(b =>
-                    String(b.assessorUsername).trim() === String(username).trim() &&
-                    String(b.assessorPassword).trim() === String(password).trim()
-                );
-            }
+            // Duplicate removed
         };
     </script>
 
@@ -3988,6 +3982,7 @@
                                             <th className="p-4 font-bold text-gray-600 border-r w-16 text-center">Sr.#</th>
                                             <th className="p-4 font-bold text-gray-600 border-r">Name</th>
                                             <th className="p-4 font-bold text-gray-600 border-r">Username</th>
+                                            <th className="p-4 font-bold text-gray-600 border-r">Password</th>
                                             <th className="p-4 font-bold text-gray-600 border-r">Batch</th>
                                             <th className="p-4 font-bold text-gray-600 border-r">SSC</th>
                                             <th className="p-4 font-bold text-gray-600 border-r">QP</th>
@@ -4008,6 +4003,9 @@
                                                         <div className="text-xs text-gray-400">{new Date(assessor.createdAt).toLocaleDateString()}</div>
                                                     </td>
                                                     <td className="p-4 border-r text-gray-700">{assessor.username}</td>
+                                                    <td className="p-4 border-r font-mono text-xs text-gray-500 relative group">
+                                                        <span className="blur-sm group-hover:blur-none transition-all cursor-pointer select-all">{assessor.password || '****'}</span>
+                                                    </td>
                                                     <td className="p-4 border-r text-blue-600 font-medium">{batch?.name || '-'}</td>
                                                     <td className="p-4 border-r text-gray-600">{ssc?.name || '-'}</td>
                                                     <td className="p-4 border-r text-gray-600">{qp?.name || '-'}</td>
