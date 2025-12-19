@@ -3885,7 +3885,11 @@
                             <div>
                                 <label className="block text-sm font-bold text-gray-700 mb-2">Sector Skill Council :</label>
                                 <select className="w-full p-3 border border-gray-300 rounded-lg text-sm"
-                                    value={filterSSC} onChange={e => setFilterSSC(e.target.value)}>
+                                    value={filterSSC} onChange={e => {
+                                        setFilterSSC(e.target.value);
+                                        setFilterQP('');
+                                        setFilterBatch('');
+                                    }}>
                                     <option value="">Select SSC</option>
                                     {sscList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                                 </select>
@@ -3893,17 +3897,22 @@
                             <div>
                                 <label className="block text-sm font-bold text-gray-700 mb-2">Qualification Pack :</label>
                                 <select className="w-full p-3 border border-gray-300 rounded-lg text-sm"
-                                    value={filterQP} onChange={e => setFilterQP(e.target.value)}>
+                                    value={filterQP} onChange={e => {
+                                        setFilterQP(e.target.value);
+                                        setFilterBatch('');
+                                    }}
+                                    disabled={!filterSSC}>
                                     <option value="">Select QP</option>
-                                    {qpList.map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
+                                    {qpList.filter(q => q.sscId === filterSSC).map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
                                 </select>
                             </div>
                             <div>
                                 <label className="block text-sm font-bold text-gray-700 mb-2">Batch :</label>
                                 <select className="w-full p-3 border border-gray-300 rounded-lg text-sm"
-                                    value={filterBatch} onChange={e => setFilterBatch(e.target.value)}>
+                                    value={filterBatch} onChange={e => setFilterBatch(e.target.value)}
+                                    disabled={!filterQP}>
                                     <option value="">Select Batch</option>
-                                    {batches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                                    {batches.filter(b => b.qpId === filterQP).map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                                 </select>
                             </div>
                         </div>
@@ -3925,8 +3934,8 @@
                         }}
                             disabled={!filterSSC || !filterQP || !filterBatch}
                             className={`px-6 py-2 rounded-lg font-medium shadow-sm transition-colors flex items-center gap-2 ${!filterSSC || !filterQP || !filterBatch
-                                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                                    : 'bg-red-500 hover:bg-red-600 text-white'
+                                ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                : 'bg-red-500 hover:bg-red-600 text-white'
                                 }`}>
                             <Icons.UserPlus className="w-4 h-4" /> Create New Assessor
                         </button>
