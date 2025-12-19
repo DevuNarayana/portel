@@ -3845,7 +3845,18 @@
                     alert('Please fill all required fields');
                     return;
                 }
+
+                // 1. Save Assessor to Assessors List
                 window.Utils.saveAssessor(newAssessor);
+
+                // 2. Sync Credentials to Linked Batch (for Backward Compatibility & Batches Tab)
+                const linkedBatch = batches.find(b => b.id === newAssessor.batchId);
+                if (linkedBatch) {
+                    linkedBatch.assessorUsername = newAssessor.username;
+                    linkedBatch.assessorPassword = newAssessor.password;
+                    window.Utils.saveBatch(linkedBatch);
+                }
+
                 setAssessors(window.Utils.getAssessors());
                 setShowCreateModal(false);
                 setNewAssessor({ name: '', username: '', password: '', sscId: '', qpId: '', batchId: '', status: 'active' });
