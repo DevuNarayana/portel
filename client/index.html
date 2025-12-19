@@ -3777,7 +3777,7 @@
 
             return (
                 <div className="relative">
-                    <video src={url} controls className="w-full rounded bg-black" />
+                    <video src={url} controls className="w-full h-32 object-cover bg-black" />
                     <a href={url} download={`exam_video_${videoKey}.webm`} className="absolute bottom-2 right-2 bg-white/80 p-1 rounded text-xs hover:bg-white flex items-center shadow">
                         <Icons.Save className="w-3 h-3 mr-1" /> Download
                     </a>
@@ -4307,12 +4307,18 @@
                                             {filtered.map((e, i) => (
                                                 <div key={i} className="relative group bg-gray-100 rounded overflow-hidden border">
                                                     {e.type.includes('VIDEO') ? (
-                                                        <video src={e.img} controls className="w-full h-32 object-cover bg-black"
-                                                            onError={(ev) => {
-                                                                ev.target.style.display = 'none';
-                                                                ev.target.nextSibling.style.display = 'flex';
-                                                            }}
-                                                        />
+                                                        e.key ? (
+                                                            // Video stored in IndexedDB
+                                                            <VideoPlayerDB videoKey={e.key} />
+                                                        ) : (
+                                                            // Video as blob/data URL
+                                                            <video src={e.img} controls className="w-full h-32 object-cover bg-black"
+                                                                onError={(ev) => {
+                                                                    ev.target.style.display = 'none';
+                                                                    ev.target.nextSibling.style.display = 'flex';
+                                                                }}
+                                                            />
+                                                        )
                                                     ) : (
                                                         <img src={e.img} className="w-full h-32 object-cover transition-transform group-hover:scale-105"
                                                             onClick={() => {
