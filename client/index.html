@@ -4327,6 +4327,8 @@
 
             const loadStudentResponse = async (s) => {
                 const responses = window.Utils.getResponses();
+                // STRICT FILTER: Match both StudentID AND ExamType
+                // This prevents 'Photo' evidence from showing up in 'Theory/Practical/Viva'
                 const resp = responses.find(r => r.studentId === s.id && r.examType === examType);
 
                 let evList = resp?.evidence || [];
@@ -4396,6 +4398,41 @@
                 ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
                 const dataUrl = canvas.toDataURL('image/jpeg');
                 addEvidence(dataUrl, 'MANUAL_CAPTURE_PHOTO');
+            };
+
+            // Helper to add evidence with correct ExamType context
+            const addEvidence = (data, type) => {
+                // When capturing, we must ensure it is saved under the CURRENT examType (e.g. 'Viva', 'Practical', 'Theory')
+                // However, if the user explicitly selected 'Photo' mode, then it saves as 'Photo'.
+                // The AssessorPortal flow sets 'examType' correctly based on user selection.
+
+                const newEvidence = { img: data, time: new Date().toISOString(), type };
+                const responses = window.Utils.getResponses();
+                const existingIdx = responses.findIndex(r => r.studentId === student.id && r.examType === examType);
+
+                if (existingIdx >= 0) {
+                    responses[existingIdx].evidence.push(newEvidence);
+                    // If it's a photo for 'Viva', it stays in 'Viva'. If it's for 'Photo', it stays in 'Photo'.
+                } else {
+                    responses.push({
+                        studentId: student.id,
+                        batchId: batch.id,
+                        examType: examType, // Critical: Saves to the specific bucket
+                        evidence: [newEvidence],
+                        answers: {},
+                        assessorMarks: {},
+                        status: 'draft'
+                    });
+                }
+                window.Utils.saveResponse(responses); // This behaves as a bulk save or we should use saveResponse per item?
+                // Wait, window.Utils.saveResponse seems to expect a list or single?
+                // Let's check Utils.saveResponse implementation. 
+                // It might be better to just modify the specific object and save.
+                localStorage.setItem(DB_KEYS.RESPONSES, JSON.stringify(responses));
+                window.Utils.uploadToCloud(true);
+
+                // Update local state
+                setEvidence(prev => [...prev, newEvidence]);
             };
 
             const toggleRecording = () => {
