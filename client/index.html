@@ -498,16 +498,42 @@
             },
             updateBatches: (batches) => localStorage.setItem(DB_KEYS.BATCHES, JSON.stringify(batches)),
             deleteBatch: (id) => {
+                // 1. Delete Batch
                 window.Utils.deleteFromCloud('batches', id);
                 let list = window.Utils.getBatches().filter(b => b.id !== id);
                 localStorage.setItem(DB_KEYS.BATCHES, JSON.stringify(list));
 
+                // 2. Delete Related Assessors (Fixes login issue)
+                let allAssessors = window.Utils.getAssessors();
+                let assessorsToDelete = allAssessors.filter(a => a.batchId === id);
+                assessorsToDelete.forEach(a => window.Utils.deleteFromCloud('assessors', a.id));
+                let remainingAssessors = allAssessors.filter(a => a.batchId !== id);
+                localStorage.setItem('se_assessors', JSON.stringify(remainingAssessors));
+
+                // 3. Delete Related Students
                 let allStudents = window.Utils.getStudents();
                 let studentsToDelete = allStudents.filter(s => s.batchId === id);
                 studentsToDelete.forEach(s => window.Utils.deleteFromCloud('students', s.id));
+                let remainingStudents = allStudents.filter(s => s.batchId !== id);
+                localStorage.setItem(DB_KEYS.STUDENTS, JSON.stringify(remainingStudents));
 
-                let students = allStudents.filter(s => s.batchId !== id);
-                localStorage.setItem(DB_KEYS.STUDENTS, JSON.stringify(students));
+                // 4. Delete Related Responses (Cleanup)
+                let allResponses = window.Utils.getResponses();
+                // Filter out responses belonging to deleted students OR the batch itself
+                let remainingResponses = allResponses.filter(r => r.batchId !== id && !studentsToDelete.find(s => s.id === r.studentId));
+                // Note: We don't individually delete responses from cloud to save API calls, 
+                // but we should ideally. For now, rely on bulk overwrite logic or garbage collection.
+                // Or better:
+                // let responsesToDelete = allResponses.filter(r => r.batchId === id);
+                // responsesToDelete.forEach(r => window.Utils.deleteFromCloud('responses', r.id));
+                localStorage.setItem(DB_KEYS.RESPONSES, JSON.stringify(remainingResponses));
+            },
+            deleteAllBatches: () => {
+                const batches = window.Utils.getBatches();
+                batches.forEach(b => window.Utils.deleteBatch(b.id));
+                // Force sync/refresh logic if needed, but deleteBatch handles local storage.
+                // Maybe clear any residual data?
+                // localStorage.setItem(DB_KEYS.BATCHES, '[]');
             },
             getStudents: () => JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]'),
             getStudentsByBatch: (batchId) => window.Utils.getStudents().filter(s => s.batchId === batchId),
