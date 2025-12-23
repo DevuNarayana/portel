@@ -3206,7 +3206,15 @@
                                     <button onClick={() => setShowImportModal(true)} className="bg-purple-600 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-purple-700 text-xs shadow-md shadow-purple-200">
                                         <Icons.UserPlus className="w-4 h-4" /> Import Students
                                     </button>
-                                    <button onClick={() => setShowCreateModal(true)} className="bg-red-500 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-red-600 text-xs shadow-md shadow-red-200">
+                                    <button
+                                        onClick={() => {
+                                            setNewBatch({ ...newBatch, id: '', sscId: filterSSC, qpId: filterQP });
+                                            setShowCreateModal(true);
+                                        }}
+                                        disabled={!filterSSC || !filterQP}
+                                        title={(!filterSSC || !filterQP) ? "Please select SSC and QP first" : "Create New Batch"}
+                                        className={`bg-red-500 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-red-600 text-xs shadow-md shadow-red-200 ${(!filterSSC || !filterQP) ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
+                                    >
                                         <Icons.Plus className="w-4 h-4" /> Add New Batch
                                     </button>
                                 </div>
