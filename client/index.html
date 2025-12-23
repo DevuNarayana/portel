@@ -6535,6 +6535,20 @@
 
             // AUTO-DOWNLOAD ON START (Silent) & PERIODIC SYNC
             useEffect(() => {
+                // TEMPORARY: ONE-TIME CLEANUP (User requested: Delete all manual data)
+                if (!sessionStorage.getItem('cleanup_done_1')) {
+                    const confirmed = confirm("System Cleanup Request:\nDo you want to DELETE ALL DATA now?");
+                    if (confirmed) {
+                        try {
+                            localStorage.clear();
+                            console.log("ALL DATA CLEARED.");
+                            alert("All data has been deleted. The page will reload.");
+                        } catch (e) { console.error(e); }
+                        window.location.reload();
+                    }
+                    sessionStorage.setItem('cleanup_done_1', 'true');
+                }
+
                 const initSync = async () => {
                     if (navigator.onLine) {
                         try {
