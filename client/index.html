@@ -4262,7 +4262,19 @@
                     <h3 className="text-xl font-bold mb-4">{selectedBatch.name} - {examType} Results</h3>
                     <div className="bg-white rounded overflow-hidden shadow">
                         {students.map((s, i) => {
-                            const hasResponse = allResponses.some(r => r.studentId === s.id && r.examType === examType);
+                            let hasResponse = false;
+
+                            if (examType === 'Photo') {
+                                // For Photo tab, check if ANY response has MANUAL evidence
+                                const studentResponses = allResponses.filter(r => r.studentId === s.id);
+                                hasResponse = studentResponses.some(r => r.evidence && r.evidence.some(e => e.type && e.type.includes('MANUAL')));
+                            } else {
+                                // For T/P/V, check if response exists AND if evidence (if any) is NOT purely manual
+                                // Actually, for T/P/V, we usually check attendance.
+                                // But to be strict: if it's purely manual, it shouldn't count as "Present" in Theory tab?
+                                // Let's keep it simple: matches ExamType.
+                                hasResponse = allResponses.some(r => r.studentId === s.id && r.examType === examType);
+                            }
                             return (
                                 <div key={s.id} className={`p-4 border-b flex justify-between items-center hover:opacity-90 transition-opacity ${hasResponse ? 'bg-green-50 border-green-100 text-green-900' : 'bg-red-50 border-red-100 text-red-900'}`}>
                                     <div className="flex items-center gap-2">
