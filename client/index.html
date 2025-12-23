@@ -2136,7 +2136,9 @@
 
                         </div>
                         <button onClick={() => setShowUploadModal(true)}
-                            className="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-lg font-medium shadow-sm transition-colors flex items-center gap-2">
+                            disabled={!selectedSSC || !filterQPId}
+                            title={(!selectedSSC || !filterQPId) ? "Please select Sector and QP first" : "Upload New Question Paper"}
+                            className={`bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-lg font-medium shadow-sm transition-colors flex items-center gap-2 ${(!selectedSSC || !filterQPId) ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}>
                             <Icons.Upload className="w-4 h-4" /> Upload Question Paper
                         </button>
                     </div>
