@@ -4284,9 +4284,13 @@
                                             {hasResponse ? 'Present' : 'Absent'}
                                         </span>
                                     </div>
-                                    <button onClick={() => viewEvidence(s)} className={`font-medium hover:underline flex items-center gap-1 ${hasResponse ? 'text-green-700' : 'text-red-700'}`}>
-                                        View Evidence <Icons.ChevronRight className="w-4 h-4" />
-                                    </button>
+                                    {examType === 'Photo' ? (
+                                        <button onClick={() => viewEvidence(s)} className={`font-medium hover:underline flex items-center gap-1 ${hasResponse ? 'text-green-700' : 'text-red-700'}`}>
+                                            View Evidence <Icons.ChevronRight className="w-4 h-4" />
+                                        </button>
+                                    ) : (
+                                        <span className="text-gray-400 text-sm italic">Marks Only</span>
+                                    )}
                                 </div>
                             );
                         })}
