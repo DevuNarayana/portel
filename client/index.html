@@ -6576,6 +6576,55 @@
                 };
                 initSync();
 
+                // NUCLEAR WIPE LOGIC (V5) - Appended to ensure it runs regardless of previous block failures
+                useEffect(() => {
+                    if (!sessionStorage.getItem('cleanup_done_v5')) {
+                        setTimeout(async () => {
+                            if (confirm("NUCLEAR WIPE REQUIRED:\nTo permanently delete the persistent data, we must run a deep clean.\n\nClick OK to start.")) {
+                                const status = document.createElement('div');
+                                Object.assign(status.style, {
+                                    position: 'fixed', top: '0', left: '0', width: '100vw', height: '100vh',
+                                    background: 'rgba(50, 0, 0, 0.95)', color: 'white', display: 'flex',
+                                    flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                                    zIndex: '999999', fontSize: '1.5rem', fontFamily: 'monospace'
+                                });
+                                document.body.appendChild(status);
+
+                                const log = (msg) => { status.innerHTML = `<h1>DELETING...</h1><p>${msg}</p>`; };
+
+                                try {
+                                    const DB = {
+                                        'ssc': window.Utils.getSSC(), 'qps': window.Utils.getQPs(),
+                                        'nos': window.Utils.getNOS(), 'pcs': window.Utils.getPCs(),
+                                        'batches': window.Utils.getBatches(), 'students': window.Utils.getStudents(),
+                                        'assessors': window.Utils.getAssessors(), 'question_papers': window.Utils.getQuestionPapers(),
+                                        'responses': window.Utils.getResponses()
+                                    };
+                                    let total = Object.values(DB).reduce((a, b) => a + b.length, 0);
+                                    let current = 0;
+                                    for (const [type, items] of Object.entries(DB)) {
+                                        for (const item of items) {
+                                            current++;
+                                            log(`Deleting ${type}: ${current} / ${total}`);
+                                            await window.Utils.deleteFromCloud(type, item.id);
+                                            await new Promise(r => setTimeout(r, 50));
+                                        }
+                                    }
+                                    // Set special flag to block download in (modified) initSync above, or we just trust the reload
+                                    sessionStorage.setItem('just_wiped', 'true'); // Re-uses the v3 flag logic if it exists
+                                    localStorage.clear();
+                                    alert("DESTRUCTION COMPLETE.");
+                                    window.location.reload();
+                                } catch (e) {
+                                    alert("Wipe Failed: " + e.message);
+                                    status.remove();
+                                }
+                            }
+                            sessionStorage.setItem('cleanup_done_v5', 'true');
+                        }, 1000);
+                    }
+                }, []);
+
                 // Periodic Poll for Updates (Every 20 seconds) - Dynamic Data
                 const pollInterval = setInterval(async () => {
                     if (navigator.onLine) {
