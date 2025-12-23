@@ -6577,10 +6577,10 @@
                 initSync();
 
                 // NUCLEAR WIPE LOGIC (V5) - Appended to ensure it runs regardless of previous block failures
-                // NUCLEAR WIPE LOGIC (V6) - Improved Clarity
-                if (!sessionStorage.getItem('cleanup_done_v6')) {
+                // NUCLEAR WIPE LOGIC (V7) - Aggressive SSC/QP targeting
+                if (!sessionStorage.getItem('cleanup_done_v7')) {
                     setTimeout(async () => {
-                        if (confirm("FACTORY RESET CONFIRMATION:\n\nThis will delete ALL data entries you created (Students, Batches, QPs, etc).\nIt will reset the database to EMPTY.\n\n(It will NOT delete the website features or code.)\n\nAre you sure you want to delete all entries?")) {
+                        if (confirm("FINAL CLEANUP: We found some leftover data (SSC/QPs).\nWe will now forcibly delete them.\n\nClick OK.")) {
                             const status = document.createElement('div');
                             Object.assign(status.style, {
                                 position: 'fixed', top: '0', left: '0', width: '100vw', height: '100vh',
@@ -6593,34 +6593,45 @@
                             const log = (msg) => { status.innerHTML = `<h1>DELETING...</h1><p>${msg}</p>`; };
 
                             try {
+                                // 1. Set Block Flag *Immediately*
+                                sessionStorage.setItem('just_wiped', 'true');
+                                localStorage.removeItem('ssc');
+                                localStorage.removeItem('qps');
+                                localStorage.removeItem('nos');
+                                localStorage.removeItem('pcs');
+
                                 const DB = {
-                                    'ssc': window.Utils.getSSC(), 'qps': window.Utils.getQPs(),
-                                    'nos': window.Utils.getNOS(), 'pcs': window.Utils.getPCs(),
-                                    'batches': window.Utils.getBatches(), 'students': window.Utils.getStudents(),
-                                    'assessors': window.Utils.getAssessors(), 'question_papers': window.Utils.getQuestionPapers(),
-                                    'responses': window.Utils.getResponses()
+                                    'ssc': window.Utils.getSSC(),
+                                    'qps': window.Utils.getQPs(),
                                 };
                                 let total = Object.values(DB).reduce((a, b) => a + b.length, 0);
                                 let current = 0;
+
+                                // 2. FORCE DELETE Generic Routes
                                 for (const [type, items] of Object.entries(DB)) {
                                     for (const item of items) {
                                         current++;
-                                        log(`Deleting ${type}: ${current} / ${total}`);
                                         await window.Utils.deleteFromCloud(type, item.id);
-                                        await new Promise(r => setTimeout(r, 50));
+                                        await new Promise(r => setTimeout(r, 100)); // Slower, heavier delete
                                     }
                                 }
-                                // Set special flag to block download in (modified) initSync above, or we just trust the reload
-                                sessionStorage.setItem('just_wiped', 'true'); // Re-uses the v3 flag logic if it exists
+
+                                // 3. Double Tap: Send empty arrays to overwrite
+                                localStorage.setItem('ssc', '[]');
+                                localStorage.setItem('qps', '[]');
+                                localStorage.setItem('nos', '[]');
+                                localStorage.setItem('pcs', '[]');
+                                await window.Utils.uploadToCloud(true);
+
                                 localStorage.clear();
-                                alert("DESTRUCTION COMPLETE.");
+                                alert("SSC/QP CLEANUP DONE.");
                                 window.location.reload();
                             } catch (e) {
-                                alert("Wipe Failed: " + e.message);
+                                alert("Cleanup Failed: " + e.message);
                                 status.remove();
                             }
                         }
-                        sessionStorage.setItem('cleanup_done_v6', 'true');
+                        sessionStorage.setItem('cleanup_done_v7', 'true');
                     }, 1000);
                 }
 
