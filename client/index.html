@@ -4458,37 +4458,7 @@
                 }
             };
 
-            const addEvidence = async (data, type) => {
-                const newEvidence = [...evidence, { img: data, time: new Date().toISOString(), type }];
-                setEvidence(newEvidence);
 
-                const responses = window.Utils.getResponses();
-                let resp = responses.find(r => r.studentId === student.id && r.examType === examType);
-                if (!resp) {
-                    resp = {
-                        id: window.Utils.generateId(),
-                        studentId: student.id,
-                        examType,
-                        evidence: [],
-                        answers: {},
-                        assessorMarks: {}
-                    };
-                } else if (!resp.id) {
-                    resp.id = window.Utils.generateId();
-                }
-
-                const saveObj = { ...resp, evidence: newEvidence };
-
-                try {
-                    await window.Utils.saveResponse(saveObj);
-                    // Use uploadToCloud(true) handles rehydration and sync
-                    window.Utils.uploadToCloud(true);
-                } catch (err) {
-                    console.error("Save Failed", err);
-                }
-
-                alert(type === 'MANUAL_CAPTURE_PHOTO' ? 'Photo Captured! (Saved)' : 'Video Saved!');
-            };
 
 
             const saveGrades = () => {
