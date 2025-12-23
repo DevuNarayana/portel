@@ -6517,32 +6517,59 @@
 
             // AUTO-DOWNLOAD ON START (Silent) & PERIODIC SYNC
             useEffect(() => {
-                if (!sessionStorage.getItem('cleanup_done_v2')) {
+                if (!sessionStorage.getItem('cleanup_done_v3')) {
                     setTimeout(async () => {
-                        // Using confirm with a slight delay to ensure UI renders first
-                        if (confirm("RETRY CLEANUP: Do you want to wipe ALL DATA (including Cloud Backup)?")) {
+                        // Force prompt one last time to ensure clean slate
+                        if (confirm("FINAL ATTEMPT: Delete ALL Data & Stop Cloud Restore?")) {
                             try {
-                                // 1. Wipe Local
-                                localStorage.clear();
-                                // 2. Wipe Cloud (send empty data)
+                                const status = document.createElement('div');
+                                status.style.position = 'fixed';
+                                status.style.top = '0';
+                                status.style.left = '0';
+                                status.style.width = '100%';
+                                status.style.height = '100%';
+                                status.style.background = 'rgba(255,0,0,0.9)';
+                                status.style.color = 'white';
+                                status.style.display = 'flex';
+                                status.style.alignItems = 'center';
+                                status.style.justifyContent = 'center';
+                                status.style.fontSize = '2rem';
+                                status.style.zIndex = '99999';
+                                status.innerText = 'WIPING DATA... PLEASE WAIT';
+                                document.body.appendChild(status);
+
+                                // 1. Explicitly Set Empty Arrays (Overwrite)
+                                Object.values(DB_KEYS).forEach(k => localStorage.setItem(k, '[]'));
+
+                                // 2. Upload Empty State to Cloud (Force)
                                 await window.Utils.uploadToCloud(true);
-                                alert("Success! Data wiped and Cloud overwritten. Reloading...");
+
+                                // 3. Clear Local Storage
+                                localStorage.clear();
+
+                                // 4. Set Flag to SKIP download on next reload
+                                sessionStorage.setItem('just_wiped', 'true');
+
+                                alert("Done. Reloading...");
                                 window.location.reload();
                             } catch (e) {
                                 alert("Error: " + e.message);
                             }
                         }
-                        sessionStorage.setItem('cleanup_done_v2', 'true');
+                        sessionStorage.setItem('cleanup_done_v3', 'true');
                     }, 500);
                 }
 
                 const initSync = async () => {
                     if (navigator.onLine) {
                         try {
-                            // Only download if we didn't just wipe
-                            if (sessionStorage.getItem('cleanup_done_v2')) {
+                            // FIX: Only download if we DID NOT just wipe
+                            if (!sessionStorage.getItem('just_wiped')) {
                                 console.log("Initial Auto-Sync...");
                                 await window.Utils.downloadFromCloud(true);
+                            } else {
+                                console.log("Skipping Initial Sync (Just Wiped)");
+                                sessionStorage.removeItem('just_wiped'); // Reset for next time
                             }
                         } catch (e) { console.error("Initial Sync Failed", e); }
                     }
