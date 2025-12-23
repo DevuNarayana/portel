@@ -6623,76 +6623,75 @@
                         sessionStorage.setItem('cleanup_done_v5', 'true');
                     }, 1000);
                 }
+
+                // Periodic Poll for Updates (Every 20 seconds) - Dynamic Data
+                const pollInterval = setInterval(async () => {
+                    if (navigator.onLine) {
+                        try {
+                            // console.log("Background Polling..."); // Too noisy
+                            await window.Utils.downloadFromCloud(true);
+                        } catch (e) { }
+                    }
+                }, 20000);
+
+                return () => clearInterval(pollInterval);
             }, []);
 
-            // Periodic Poll for Updates (Every 20 seconds) - Dynamic Data
-            const pollInterval = setInterval(async () => {
-                if (navigator.onLine) {
-                    try {
-                        // console.log("Background Polling..."); // Too noisy
-                        await window.Utils.downloadFromCloud(true);
-                    } catch (e) { }
-                }
-            }, 20000);
-
-            return () => clearInterval(pollInterval);
-        }, []);
-
-        // Real-Time Socket Sync
-        useEffect(() => {
-            const handleDataChange = async () => {
-                console.log("Remote Data Change Detected -> Auto-Syncing...");
-                if (navigator.onLine) {
-                    try {
-                        await window.Utils.downloadFromCloud(true);
-                        // Optional: Force re-render if needed, but Utils updates localStorage
-                        // and components using localStorage or listeners will update.
-                        window.dispatchEvent(new Event('cloud-sync-complete'));
-                    } catch (e) {
-                        console.error("Auto-Sync Failed", e);
+            // Real-Time Socket Sync
+            useEffect(() => {
+                const handleDataChange = async () => {
+                    console.log("Remote Data Change Detected -> Auto-Syncing...");
+                    if (navigator.onLine) {
+                        try {
+                            await window.Utils.downloadFromCloud(true);
+                            // Optional: Force re-render if needed, but Utils updates localStorage
+                            // and components using localStorage or listeners will update.
+                            window.dispatchEvent(new Event('cloud-sync-complete'));
+                        } catch (e) {
+                            console.error("Auto-Sync Failed", e);
+                        }
                     }
-                }
-            };
+                };
 
-            socket.on('data-change', handleDataChange);
+                socket.on('data-change', handleDataChange);
 
-            return () => {
-                socket.off('data-change', handleDataChange);
-            };
-        }, []);
-        // useEffect(() => { if (window.lucide) window.lucide.createIcons(); }); // REMOVED: Managed by LucideIcon
-        if (!user) return <LoginScreen onLogin={setUser} />;
-        return (
-            <div className="min-h-screen bg-slate-50">
-                <header className="bg-white shadow-sm border-b px-8 py-4 flex justify-between items-center">
-                    <div className="flex items-center gap-2 font-bold text-xl text-gray-800">
-                        <div className="bg-indigo-600 text-white rounded p-1">N</div> NSXpertise
-                    </div>
-                    <div className="flex gap-4 items-center">
-                        {/* GLOBAL CLOUD SYNC */}
-                        <div className="flex items-center gap-2 bg-gray-50 rounded-lg p-1 border">
-                            <button onClick={() => window.Utils.uploadToCloud()} className="p-1 px-2 text-blue-600 hover:bg-blue-100 rounded text-xs font-bold flex items-center gap-1" title="Upload to Cloud">
-                                <Icons.Upload className="w-4 h-4" /> Upload
-                            </button>
-                            <div className="w-px h-4 bg-gray-300"></div>
-                            <button onClick={() => window.Utils.downloadFromCloud()} className="p-1 px-2 text-green-600 hover:bg-green-100 rounded text-xs font-bold flex items-center gap-1" title="Download from Cloud">
-                                <Icons.Download className="w-4 h-4" /> Download
-                            </button>
+                return () => {
+                    socket.off('data-change', handleDataChange);
+                };
+            }, []);
+            // useEffect(() => { if (window.lucide) window.lucide.createIcons(); }); // REMOVED: Managed by LucideIcon
+            if (!user) return <LoginScreen onLogin={setUser} />;
+            return (
+                <div className="min-h-screen bg-slate-50">
+                    <header className="bg-white shadow-sm border-b px-8 py-4 flex justify-between items-center">
+                        <div className="flex items-center gap-2 font-bold text-xl text-gray-800">
+                            <div className="bg-indigo-600 text-white rounded p-1">N</div> NSXpertise
                         </div>
+                        <div className="flex gap-4 items-center">
+                            {/* GLOBAL CLOUD SYNC */}
+                            <div className="flex items-center gap-2 bg-gray-50 rounded-lg p-1 border">
+                                <button onClick={() => window.Utils.uploadToCloud()} className="p-1 px-2 text-blue-600 hover:bg-blue-100 rounded text-xs font-bold flex items-center gap-1" title="Upload to Cloud">
+                                    <Icons.Upload className="w-4 h-4" /> Upload
+                                </button>
+                                <div className="w-px h-4 bg-gray-300"></div>
+                                <button onClick={() => window.Utils.downloadFromCloud()} className="p-1 px-2 text-green-600 hover:bg-green-100 rounded text-xs font-bold flex items-center gap-1" title="Download from Cloud">
+                                    <Icons.Download className="w-4 h-4" /> Download
+                                </button>
+                            </div>
 
-                        <span className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs font-bold uppercase">{user.role}</span>
-                        <button onClick={() => setUser(null)} className="text-gray-500 hover:text-red-600 text-sm">Logout</button>
-                    </div>
-                </header>
-                <main>
-                    <ErrorBoundary>
-                        {user.role === 'admin' && <AdminDashboard />}
-                        {user.role === 'student' && <StudentPortal user={user} />}
-                        {user.role === 'assessor' && <AssessorPortal user={user} />}
-                    </ErrorBoundary>
-                </main>
-            </div>
-        );
+                            <span className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs font-bold uppercase">{user.role}</span>
+                            <button onClick={() => setUser(null)} className="text-gray-500 hover:text-red-600 text-sm">Logout</button>
+                        </div>
+                    </header>
+                    <main>
+                        <ErrorBoundary>
+                            {user.role === 'admin' && <AdminDashboard />}
+                            {user.role === 'student' && <StudentPortal user={user} />}
+                            {user.role === 'assessor' && <AssessorPortal user={user} />}
+                        </ErrorBoundary>
+                    </main>
+                </div>
+            );
         };
 
         const root = createRoot(document.getElementById('root'));
