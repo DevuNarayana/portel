@@ -3178,6 +3178,17 @@
                                     <span>Total Records : {filteredBatches.length}</span>
                                 </div>
                                 <div className="flex gap-2">
+                                    <button onClick={() => {
+                                        if (confirm('DANGER: Are you sure you want to DELETE ALL BATCHES?\nThis will permanently delete ALL batches, students, assessors, and exam data.\nThis action cannot be undone.')) {
+                                            if (confirm('Please confirm again: DELETE EVERYTHING?')) {
+                                                window.Utils.deleteAllBatches();
+                                                // Reload to clear state cleanly
+                                                window.location.reload();
+                                            }
+                                        }
+                                    }} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded flex items-center gap-2 text-xs shadow-md shadow-red-200">
+                                        <Icons.Trash2 className="w-4 h-4" /> Delete All Data
+                                    </button>
                                     <button className="bg-gray-600 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-gray-700 text-xs shadow-md">
                                         Export To <Icons.ChevronDown className="w-4 h-4" />
                                     </button>
