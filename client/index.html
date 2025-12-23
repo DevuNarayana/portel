@@ -6578,7 +6578,7 @@
 
                 // NUCLEAR WIPE LOGIC (V5) - Appended to ensure it runs regardless of previous block failures
                 // NUCLEAR WIPE LOGIC (V7) - Aggressive SSC/QP targeting
-                if (!sessionStorage.getItem('cleanup_done_v7')) {
+                if (false) { // CLEANUP DISABLED (System Clean)
                     setTimeout(async () => {
                         if (confirm("FINAL CLEANUP: We found some leftover data (SSC/QPs).\nWe will now forcibly delete them.\n\nClick OK.")) {
                             const status = document.createElement('div');
