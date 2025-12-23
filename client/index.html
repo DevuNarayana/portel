@@ -6577,10 +6577,10 @@
                 initSync();
 
                 // NUCLEAR WIPE LOGIC (V5) - Appended to ensure it runs regardless of previous block failures
-                // NUCLEAR WIPE LOGIC (V5) - Executing directly in effect
-                if (!sessionStorage.getItem('cleanup_done_v5')) {
+                // NUCLEAR WIPE LOGIC (V6) - Improved Clarity
+                if (!sessionStorage.getItem('cleanup_done_v6')) {
                     setTimeout(async () => {
-                        if (confirm("NUCLEAR WIPE REQUIRED:\nTo permanently delete the persistent data, we must run a deep clean.\n\nClick OK to start.")) {
+                        if (confirm("FACTORY RESET CONFIRMATION:\n\nThis will delete ALL data entries you created (Students, Batches, QPs, etc).\nIt will reset the database to EMPTY.\n\n(It will NOT delete the website features or code.)\n\nAre you sure you want to delete all entries?")) {
                             const status = document.createElement('div');
                             Object.assign(status.style, {
                                 position: 'fixed', top: '0', left: '0', width: '100vw', height: '100vh',
@@ -6620,7 +6620,7 @@
                                 status.remove();
                             }
                         }
-                        sessionStorage.setItem('cleanup_done_v5', 'true');
+                        sessionStorage.setItem('cleanup_done_v6', 'true');
                     }, 1000);
                 }
 
