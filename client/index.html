@@ -4327,11 +4327,29 @@
 
             const loadStudentResponse = async (s) => {
                 const responses = window.Utils.getResponses();
-                // STRICT FILTER: Match both StudentID AND ExamType
-                // This prevents 'Photo' evidence from showing up in 'Theory/Practical/Viva'
-                const resp = responses.find(r => r.studentId === s.id && r.examType === examType);
+                let evList = [];
+                let targetResp = null;
 
-                let evList = resp?.evidence || [];
+                if (examType === 'Photo') {
+                    // AGGREGATE VIEW: Fetch ALL manual captures from ALL responses for this student
+                    const allStudentResponses = responses.filter(r => r.studentId === s.id);
+                    allStudentResponses.forEach(r => {
+                        if (r.evidence && Array.isArray(r.evidence)) {
+                            const manuals = r.evidence.filter(e => e.type && e.type.includes('MANUAL'));
+                            evList = [...evList, ...manuals];
+                        }
+                    });
+                    // For 'Photo' view, we don't display specific answers/grades, just the gallery
+                    targetResp = { evidence: evList };
+                } else {
+                    // SPECIFIC EXAM VIEW (Theory/Practical/Viva)
+                    // HIDE Manual Captures (they belong to Photo tab)
+                    targetResp = responses.find(r => r.studentId === s.id && r.examType === examType);
+                    if (targetResp && targetResp.evidence) {
+                        evList = targetResp.evidence.filter(e => !e.type || !e.type.includes('MANUAL'));
+                    }
+                }
+
                 // RESOLVE INDEXEDDB IMAGES
                 const resolvedEvidence = await Promise.all(evList.map(async (e) => {
                     if (e.storage === 'indexeddb' && e.img) {
@@ -4346,8 +4364,8 @@
                 }));
 
                 setEvidence(resolvedEvidence);
-                setAnswers(resp?.answers || {});
-                setGrades(resp?.assessorMarks || {});
+                setAnswers(targetResp?.answers || {});
+                setGrades(targetResp?.assessorMarks || {});
             };
 
             // Camera Functions
