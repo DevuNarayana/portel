@@ -24,13 +24,14 @@ const LiveVivaConsole = ({ batch, student, onClose }) => {
 
     useEffect(() => {
         // 1. Initialize Socket
-        socketRef.current = io(SERVER_URL);
+        // socketRef.current = io(SERVER_URL);
+        console.warn("Socket.io (LiveVivaComponent) is disabled. Signaling needs to be migrated to Firestore.");
         const socket = socketRef.current;
         // Unique Room for 1-on-1: BatchID_StudentID
         const roomId = `${batch.id}_${student.id}`;
 
-        setConnectionStatus(`Joining Room: ${roomId}...`);
-        socket.emit('join-room', roomId, 'assessor');
+        // setConnectionStatus(`Joining Room: ${roomId}...`);
+        // if (socket) socket.emit('join-room', roomId, 'assessor');
 
         // 2. Initialize PeerConnection
         peerRef.current = new RTCPeerConnection({
@@ -50,7 +51,7 @@ const LiveVivaConsole = ({ batch, student, onClose }) => {
 
         // 4. Handle ICE Candidates
         pc.onicecandidate = (event) => {
-            if (event.candidate) {
+            if (event.candidate && socket) {
                 socket.emit('signal', { roomId, signal: { type: 'candidate', candidate: event.candidate } });
             }
         };
@@ -64,32 +65,34 @@ const LiveVivaConsole = ({ batch, student, onClose }) => {
         };
 
         // 6. Signaling Handlers
-        socket.on('user-connected', async (userId) => {
-            console.log("Student Connected:", userId);
-            setConnectionStatus('Student Connected. Calling...');
-            // Assessor Initiates Offer
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            socket.emit('signal', { roomId, signal: { type: 'offer', sdp: offer } });
-        });
+        if (socket) {
+            socket.on('user-connected', async (userId) => {
+                console.log("Student Connected:", userId);
+                setConnectionStatus('Student Connected. Calling...');
+                // Assessor Initiates Offer
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                socket.emit('signal', { roomId, signal: { type: 'offer', sdp: offer } });
+            });
 
-        socket.on('signal', async (data) => {
-            if (!data.signal) return;
-            // Avoid self-signal if broadcasted back? (Socket.io room usually broadcasts to others, but good to check sender)
-            if (data.sender === socket.id) return;
+            socket.on('signal', async (data) => {
+                if (!data.signal) return;
+                // Avoid self-signal if broadcasted back? (Socket.io room usually broadcasts to others, but good to check sender)
+                if (data.sender === socket.id) return;
 
-            if (data.signal.type === 'offer') {
-                // If student initiated (unlikely in this flow, but possible)
-                await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
-                const answer = await pc.createAnswer();
-                await pc.setLocalDescription(answer);
-                socket.emit('signal', { roomId, signal: { type: 'answer', sdp: answer } });
-            } else if (data.signal.type === 'answer') {
-                await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
-            } else if (data.signal.type === 'candidate') {
-                await pc.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
-            }
-        });
+                if (data.signal.type === 'offer') {
+                    // If student initiated (unlikely in this flow, but possible)
+                    await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    socket.emit('signal', { roomId, signal: { type: 'answer', sdp: answer } });
+                } else if (data.signal.type === 'answer') {
+                    await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
+                } else if (data.signal.type === 'candidate') {
+                    await pc.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
+                }
+            });
+        }
 
         // Cleanup
         return () => {

@@ -10,7 +10,9 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -37,6 +39,26 @@
             backdrop-filter: blur(10px);
             background: rgba(255, 255, 255, 0.9);
         }
+
+        /* Custom Scrollbar Global */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
     </style>
 </head>
 
@@ -53,12 +75,39 @@
         };
 
         // CONFIGURATION
-        // For Production (Vercel), replace this with your deployed backend URL
-        const SERVER_URL = 'https://portel-backend.onrender.com';
-        const API_KEY = 'portel_secure_key_2025'; // Must match server
+        // FIREBASE CONFIGURATION
+        // FIREBASE CONFIGURATION
+        const firebaseConfig = {
+            apiKey: "AIzaSyD0fEVoIjWSb6RaQDQqLDHhsJ-e6ddb_ys",
+            authDomain: "exam-portal-2004.firebaseapp.com",
+            projectId: "exam-portal-2004",
+            storageBucket: "exam-portal-2004.firebasestorage.app",
+            messagingSenderId: "197945881544",
+            appId: "1:197945881544:web:250d331c5e198e716106fd",
+            measurementId: "G-4H9J4ZYHXC"
+        };
 
-        // Global Socket Initialization for Real-Time Sync
-        const socket = io(SERVER_URL);
+        let db = null;
+        let auth = null;
+
+        try {
+            // Initialize Firebase
+            if (typeof firebase !== 'undefined' && firebase.apps.length === 0) {
+                firebase.initializeApp(firebaseConfig);
+                db = firebase.firestore();
+                auth = firebase.auth();
+
+                // Enable Offline Persistence
+                db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
+                    console.warn("Firestore Persistence Error:", err.code);
+                });
+                console.log("Firebase Initialized");
+            } else {
+                console.error("Firebase SDK not loaded.");
+            }
+        } catch (e) {
+            console.error("Firebase Init Failed (Check Keys)", e);
+        }
 
 
         // IndexedDB for Large Video Storage
@@ -103,128 +152,187 @@
             generateId: () => 'id_' + Math.random().toString(36).substr(2, 9) + Date.now(),
 
             // HELPER: Delete from Cloud
+            // HELPER: Delete from Cloud
             deleteFromCloud: async (route, id) => {
-                if (!id) return;
+                if (!id || !db) return;
                 try {
-                    await fetch(`${SERVER_URL}/api/${route}/${id}`, {
-                        method: 'DELETE',
-                        headers: { 'x-api-key': API_KEY }
-                    }).catch(e => console.error(`Failed to delete ${route}/${id}`, e));
-                } catch (e) { console.error("Delete setup failed", e); }
+                    await db.collection(route).doc(id).delete();
+                } catch (e) { console.error("Firestore Delete failed", e); }
+            },
+
+            // AUTOMATIC DATA HEALER (Fixes Corruption from Array-in-Array bug)
+            healData: () => {
+                try {
+                    const raw = localStorage.getItem(DB_KEYS.RESPONSES);
+                    if (raw) {
+                        let data = JSON.parse(raw);
+                        if (Array.isArray(data)) {
+                            let fixed = [];
+                            let hasCorruption = false;
+
+                            // Recursive flatten or just 1-level check
+                            const collect = (arr) => {
+                                for (let i = 0; i < arr.length; i++) {
+                                    if (Array.isArray(arr[i])) {
+                                        hasCorruption = true;
+                                        collect(arr[i]); // Recursive flatten
+                                    } else {
+                                        fixed.push(arr[i]);
+                                    }
+                                }
+                            };
+                            collect(data);
+
+                            if (hasCorruption) {
+                                console.warn("MakeItApp: Data Corruption Detected. Healing...");
+                                localStorage.setItem(DB_KEYS.RESPONSES, JSON.stringify(fixed));
+                                alert("System has automatically repaired some data files. Please try Uploading again.");
+                            }
+                        }
+                    }
+                } catch (e) { console.error("Heal failed", e); }
             },
 
             // NEW: Atomic Save to Cloud
 
 
             // CLOUD SYNC FUNCTIONS
+            // CLOUD SYNC FUNCTIONS
             uploadToCloud: async (silent = false) => {
                 const MAPPING = {
                     'batches': DB_KEYS.BATCHES, 'students': DB_KEYS.STUDENTS,
                     'qps': DB_KEYS.QP, 'nos': DB_KEYS.NOS, 'pcs': DB_KEYS.PC,
                     'ssc': DB_KEYS.SSC, 'responses': DB_KEYS.RESPONSES,
-                    'question_papers': DB_KEYS.QUESTION_PAPERS
+                    'question_papers': DB_KEYS.QUESTION_PAPERS,
+                    'assessors': 'se_assessors'
                 };
                 let success = 0;
+                let failCount = 0;
                 const statusBtn = document.getElementById('sync-status-text');
                 if (statusBtn) statusBtn.innerText = "Uploading...";
 
-                const errors = [];
+                // Check Network
+                if (!navigator.onLine) {
+                    if (!silent) alert("No Internet Connection. Sync skipped.");
+                    return;
+                }
+
+                if (!db) {
+                    console.warn("DB not ready");
+                    return;
+                }
+
                 for (const [route, key] of Object.entries(MAPPING)) {
                     try {
                         const dataStr = localStorage.getItem(key);
                         if (dataStr && dataStr !== '[]') {
-                            let items = JSON.parse(dataStr);
-                            let modified = false;
-
+                            const items = JSON.parse(dataStr);
                             if (Array.isArray(items)) {
-                                items = items.map(item => {
-                                    if (!item.id) {
-                                        item.id = window.Utils.generateId ? window.Utils.generateId() : (Date.now().toString(36) + Math.random().toString(36).substr(2));
-                                        modified = true;
-                                    }
-                                    return item;
-                                });
-
-                                // FIX: Save generated IDs IMMEDIATELY before upload to prevent race conditions
-                                if (modified) {
-                                    localStorage.setItem(key, JSON.stringify(items));
-                                    console.log(`Auto-assigned IDs for ${key} (Pre-Upload)`);
-                                }
-
-                                // REHYDRATION: Check for offloaded images in IndexedDB
-                                if (route === 'responses' || route === 'manual_captures') {
-                                    for (let i = 0; i < items.length; i++) {
-                                        const item = items[i];
-                                        if (item.evidence && Array.isArray(item.evidence)) {
+                                for (const item of items) {
+                                    try {
+                                        // 1. Rehydration Logic
+                                        if ((route === 'responses' || route === 'manual_captures') && item.evidence && Array.isArray(item.evidence)) {
                                             for (let j = 0; j < item.evidence.length; j++) {
                                                 const ev = item.evidence[j];
-                                                if (ev.storage === 'indexeddb' && ev.img) {
-                                                    try {
-                                                        const blob = await VideoDB.getVideo(ev.img);
+                                                // DETECT OFFLOADED MEDIA: storage='indexeddb' OR type='VIDEO_INDEXED_DB' OR presence of key string
+                                                const isOffloaded = ev.storage === 'indexeddb' || ev.type === 'VIDEO_INDEXED_DB' || (ev.key && !ev.img);
+
+                                                if (isOffloaded) {
+                                                    const keyToFetch = ev.img || ev.key;
+                                                    console.log(`Rehydrating evidence ${j} for sync. Key: ${keyToFetch}`);
+                                                    if (keyToFetch) {
+                                                        const blob = await VideoDB.getVideo(keyToFetch);
                                                         if (blob) {
                                                             const base64 = await new Promise((resolve) => {
                                                                 const reader = new FileReader();
                                                                 reader.onloadend = () => resolve(reader.result);
                                                                 reader.readAsDataURL(blob);
                                                             });
-                                                            // Replace key with full data for upload
-                                                            items[i].evidence[j] = { ...ev, img: base64 };
-                                                            /* Note: We do NOT delete from IndexedDB here until we confirm upload success.
-                                                               Actually, we keep it in IndexedDB for local viewing too. */
+                                                            item.evidence[j] = { ...ev, img: base64 };
+                                                        } else {
+                                                            console.warn(`Local video file not found for key: ${keyToFetch}. Sync will skip video content.`);
                                                         }
-                                                    } catch (err) {
-                                                        console.error("Failed to rehydrate image", err);
                                                     }
                                                 }
                                             }
                                         }
+
+                                        // 2. ID Generation
+                                        if (!item.id) {
+                                            item.id = window.Utils.generateId ? window.Utils.generateId() : Date.now().toString(36);
+                                        }
+
+                                        // 3. CHUNKING LOGIC FOR LARGE EVIDENCE
+                                        const clean = JSON.parse(JSON.stringify(item));
+
+                                        if (clean.evidence && Array.isArray(clean.evidence)) {
+                                            for (let j = 0; j < clean.evidence.length; j++) {
+                                                const ev = clean.evidence[j];
+                                                if (ev.img && typeof ev.img === 'string') {
+                                                    const size = ev.img.length;
+                                                    // Threshold: 900,000 chars (~900KB)
+                                                    if (size > 900000) {
+                                                        console.log(`Chunking large evidence ${j} for item ${item.id} (Size: ${size})`);
+
+                                                        const chunkIds = [];
+                                                        const chunkSize = 800000; // 800KB safe chunks
+                                                        const totalChunks = Math.ceil(size / chunkSize);
+
+                                                        for (let c = 0; c < totalChunks; c++) {
+                                                            const start = c * chunkSize;
+                                                            const end = start + chunkSize;
+                                                            const chunkData = ev.img.substring(start, end);
+
+                                                            const chunkId = `chk_${item.id}_${j}_${c}_${Date.now()}`;
+                                                            // Upload Chunk
+                                                            await db.collection('synced_chunks').doc(chunkId).set({
+                                                                parentId: item.id,
+                                                                evidenceIndex: j,
+                                                                index: c,
+                                                                total: totalChunks,
+                                                                data: chunkData
+                                                            });
+                                                            chunkIds.push(chunkId);
+                                                        }
+
+                                                        // Replace Data with Reference
+                                                        clean.evidence[j].img = null; // Clear huge string
+                                                        clean.evidence[j].isChunked = true;
+                                                        clean.evidence[j].chunkIds = chunkIds;
+                                                        clean.evidence[j].originalSize = size;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // 4. Individual Write
+                                        await db.collection(route).doc(item.id).set(clean, { merge: true });
+                                        success++;
+
+                                    } catch (innerErr) {
+                                        console.error(`Failed to sync item ${item.id} in ${route}`, innerErr);
+                                        failCount++;
                                     }
                                 }
-
-                                // Perform upload
-                                const res = await fetch(`${SERVER_URL}/api/sync/${route}`, {
-                                    method: 'POST',
-                                    headers: {
-                                        'Content-Type': 'application/json',
-                                        'x-api-key': API_KEY
-                                    },
-                                    body: JSON.stringify(items)
-                                });
-
-                                // (Double check local storage didn't change? No, we trust the merge logic else where)
-                                // If successful, we are good.
-
-                                if (!res.ok) {
-                                    const errText = await res.text();
-                                    throw new Error(`${res.status} ${res.statusText}: ${errText}`);
-                                }
-                                success++;
                             }
                         }
-                    } catch (e) {
-                        console.error(`Upload error ${route}`, e);
-                        if (!silent) errors.push(`${route}: ${e.message}`);
-                    }
+                    } catch (e) { console.error(`Upload error ${route}`, e); }
                 }
 
-                if (!silent) {
-                    if (errors.length > 0) {
-                        alert(`Upload Finished with Errors:\n${errors.join('\n')}\n\nSuccess: ${success} categories.`);
-                    } else {
-                        alert(`Successfully Uploaded ${success} categories to Cloud!`);
-                    }
-                } else {
-                    console.log(`Auto-Sync Complete: ${success} categories uploaded.`);
-                }
+                const msg = `Synced ${success} items. ${failCount > 0 ? `Failed: ${failCount}.` : ''}`;
+                console.log(msg);
+                if (!silent && failCount > 0) alert(msg + " Check console for details.");
                 if (statusBtn) statusBtn.innerText = "Synced";
             },
 
             downloadFromCloud: async (silent = false) => {
+                if (!db) return;
                 const MAPPING = {
                     'batches': DB_KEYS.BATCHES, 'students': DB_KEYS.STUDENTS,
                     'qps': DB_KEYS.QP, 'nos': DB_KEYS.NOS, 'pcs': DB_KEYS.PC,
                     'ssc': DB_KEYS.SSC, 'responses': DB_KEYS.RESPONSES,
-                    'question_papers': DB_KEYS.QUESTION_PAPERS
+                    'question_papers': DB_KEYS.QUESTION_PAPERS,
+                    'assessors': 'se_assessors'
                 };
                 let success = 0;
                 const statusBtn = document.getElementById('sync-status-text');
@@ -232,104 +340,76 @@
 
                 for (const [route, key] of Object.entries(MAPPING)) {
                     try {
-                        if (!navigator.onLine) continue;
-                        const res = await fetch(`${SERVER_URL}/api/${route}`, {
-                            headers: { 'x-api-key': API_KEY }
-                        });
+                        const snap = await db.collection(route).get();
+                        if (!snap.empty) {
+                            const data = snap.docs.map(doc => doc.data());
 
-                        if (res.ok) {
-                            const data = await res.json();
+                            if (key === DB_KEYS.RESPONSES) {
+                                // Handle Response Images Offloading (Base64 -> IndexedDB)
+                                for (let i = 0; i < data.length; i++) {
+                                    const item = data[i];
+                                    if (item.evidence && Array.isArray(item.evidence)) {
+                                        for (let j = 0; j < item.evidence.length; j++) {
+                                            const ev = item.evidence[j];
 
-                            // HYDRATION CHECK: If Server is Empty but Local has Data -> Restore Server
-                            const localData = JSON.parse(localStorage.getItem(key) || '[]');
-                            if (Array.isArray(data) && data.length === 0 && localData.length > 0) {
-                                console.warn(`[Hydration] Server missing data for ${key}. Restoring from Local...`);
-                                // We don't overwrite local with empty server data
-                                // Instead, we trigger an upload in background
-                                setTimeout(() => window.Utils.uploadToCloud(true), 1000);
-                                continue;
-                            }
+                                            // 1. REASSEMBLE CHUNKS (New Logic)
+                                            if (ev.isChunked && ev.chunkIds && ev.chunkIds.length > 0) {
+                                                console.log(`Reassembling ${ev.chunkIds.length} chunks for ${item.id} evidence ${j}`);
+                                                try {
+                                                    // Fetch all chunks in parallel
+                                                    const chunkPromises = ev.chunkIds.map(cid => db.collection('synced_chunks').doc(cid).get());
+                                                    const chunkSnaps = await Promise.all(chunkPromises);
 
-                            if (Array.isArray(data)) {
-                                if (key === DB_KEYS.RESPONSES) {
-                                    // SPECIAL MERGE FOR RESPONSES to prevent data loss on single-device testing
+                                                    // Sort by index to be safe (though usually ordered in array)
+                                                    const chunks = chunkSnaps
+                                                        .map(s => s.data())
+                                                        .filter(c => c) // remove nulls
+                                                        .sort((a, b) => a.index - b.index);
 
-                                    // PRE-PROCESS: Offload incoming images to IndexedDB
-                                    // This prevents QuotaExceededError when pulling large history
-                                    for (let i = 0; i < data.length; i++) {
-                                        const item = data[i];
-                                        if (item.evidence && Array.isArray(item.evidence)) {
-                                            for (let j = 0; j < item.evidence.length; j++) {
-                                                const ev = item.evidence[j];
-                                                if (ev.img && ev.img.startsWith('data:image')) {
-                                                    try {
-                                                        const blob = window.Utils.base64ToBlob(ev.img);
-                                                        const key = `ev_dl_${item.id}_${j}_${Date.now()}`;
-                                                        await VideoDB.saveVideo(key, blob);
-                                                        data[i].evidence[j] = { ...ev, img: key, storage: 'indexeddb' };
-                                                    } catch (e) {
-                                                        console.error("Failed to offload downloaded image", e);
-                                                    }
+                                                    // Concatenate
+                                                    const fullBase64 = chunks.map(c => c.data).join('');
+
+                                                    // Restore to 'ev.img' for the next step (IndexedDB offloading)
+                                                    ev.img = fullBase64;
+                                                    delete ev.isChunked; // Clean up so it looks like a normal huge file now
+                                                    delete ev.chunkIds;
+                                                    console.log(`Reassembly complete. Size: ${fullBase64.length}`);
+                                                } catch (err) {
+                                                    console.error("Chunk Reassembly Failed", err);
+                                                    ev.img = null; // Mark as failed
                                                 }
+                                            }
+
+                                            // 2. OFFLOAD TO INDEXEDDB (Existing Logic - Updated for Video Support)
+                                            // Now 'ev.img' is populated either from direct download OR reassembly above
+                                            if (ev.img && (ev.img.startsWith('data:image') || ev.img.startsWith('data:video'))) {
+                                                try {
+                                                    const blob = window.Utils.base64ToBlob(ev.img);
+                                                    // CRITICAL: If 'ev.key' exists (Video), use it! Otherwise generate new (Image)
+                                                    const k = ev.key || `ev_dl_${item.id}_${j}_${Date.now()}`;
+                                                    await VideoDB.saveVideo(k, blob);
+
+                                                    // Update item to point to IndexedDB
+                                                    data[i].evidence[j] = { ...ev, img: k, storage: 'indexeddb' };
+                                                    // Ensure key is preserved for Videos
+                                                    if (ev.key) data[i].evidence[j].key = k;
+                                                } catch (e) { console.error("Offload Fail", e); }
                                             }
                                         }
                                     }
-
-                                    const local = JSON.parse(localStorage.getItem(key) || '[]');
-                                    // Create Map by ID
-                                    const map = new Map();
-                                    // 1. Start with Server Data (Source of Truth for Download)
-                                    data.forEach(item => map.set(item.id, item));
-
-                                    // 2. Smart Merge with Local Data (Preserve Unsynced Work)
-                                    local.forEach(localItem => {
-                                        const serverItem = map.get(localItem.id);
-                                        if (!serverItem) {
-                                            // Item exists only locally (Unsynced work) -> Keep it
-                                            map.set(localItem.id, localItem);
-                                        } else {
-                                            // Conflict: Both have data. Choose the "More Complete" one.
-                                            const sEv = serverItem.evidence?.length || 0;
-                                            const lEv = localItem.evidence?.length || 0;
-                                            const sAns = Object.keys(serverItem.answers || {}).length;
-                                            const lAns = Object.keys(localItem.answers || {}).length;
-
-                                            // Scoring: Evidence (100 pts) > Answers (1 pt)
-                                            // If Local has MORE data, keep Local. Otherwise, accept Server update.
-                                            const sScore = (sEv * 100) + sAns;
-                                            const lScore = (lEv * 100) + lAns;
-
-                                            if (lScore > sScore) {
-                                                map.set(localItem.id, localItem);
-                                            }
-                                        }
-                                    });
-
-                                    // Convert back
-                                    const merged = Array.from(map.values());
-                                    localStorage.setItem(key, JSON.stringify(merged));
-
-                                    // If Local had items not in Server, validation-upload might be needed.
-                                    // We can trigger background sync if counts differ significantly?
-                                    // For now, safe merge is enough.
-                                    success++;
-                                } else {
-                                    localStorage.setItem(key, JSON.stringify(data));
-                                    success++;
                                 }
                             }
+
+                            localStorage.setItem(key, JSON.stringify(data));
+                            success++;
                         }
-                    } catch (e) {
-                        console.error(`Download error ${route}`, e);
-                    }
+                    } catch (e) { console.error(`Download error ${route}`, e); }
                 }
+                if (!silent) alert(`Downloaded ${success} collections from Firebase.`);
+                if (statusBtn) statusBtn.innerText = "Synced";
 
                 // TRIGGER UI UPDATES
                 window.dispatchEvent(new Event('cloud-sync-complete'));
-
-                if (!silent) alert(`Downloaded ${success} categories from Cloud.`);
-                console.log(`Cloud Sync (Download): ${success} categories updated.`);
-                if (statusBtn) statusBtn.innerText = "Synced";
             },
 
             getSSC: () => JSON.parse(localStorage.getItem(DB_KEYS.SSC) || '[]'),
@@ -420,7 +500,9 @@
             saveQP: (qp) => {
                 const list = window.Utils.getQPs();
                 if (!qp.id) qp.id = Date.now().toString(36) + Math.random().toString(36).substr(2);
-                list.push(qp);
+                const existingIndex = list.findIndex(item => item.id === qp.id);
+                if (existingIndex >= 0) list[existingIndex] = qp;
+                else list.push(qp);
                 localStorage.setItem(DB_KEYS.QP, JSON.stringify(list));
                 window.Utils.saveToCloud('qps', qp);
             },
@@ -434,7 +516,9 @@
             saveNOS: (nos) => {
                 const list = window.Utils.getNOS();
                 if (!nos.id) nos.id = Date.now().toString(36) + Math.random().toString(36).substr(2);
-                list.push(nos);
+                const existingIndex = list.findIndex(item => item.id === nos.id);
+                if (existingIndex >= 0) list[existingIndex] = nos;
+                else list.push(nos);
                 localStorage.setItem(DB_KEYS.NOS, JSON.stringify(list));
                 window.Utils.saveToCloud('nos', nos);
             },
@@ -448,7 +532,9 @@
             savePC: (pc) => {
                 const list = window.Utils.getPCs();
                 if (!pc.id) pc.id = Date.now().toString(36) + Math.random().toString(36).substr(2);
-                list.push(pc);
+                const existingIndex = list.findIndex(item => item.id === pc.id);
+                if (existingIndex >= 0) list[existingIndex] = pc;
+                else list.push(pc);
                 localStorage.setItem(DB_KEYS.PC, JSON.stringify(list));
                 window.Utils.saveToCloud('pcs', pc);
             },
@@ -460,16 +546,29 @@
             getBatches: () => JSON.parse(localStorage.getItem(DB_KEYS.BATCHES) || '[]'),
             saveToCloud: async (route, item) => {
                 try {
-                    if (!navigator.onLine) return false;
-                    const res = await fetch(`${SERVER_URL}/api/${route}`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'x-api-key': API_KEY },
-                        body: JSON.stringify(item)
-                    });
-                    return res.ok;
+                    if (!db || !item.id) {
+                        console.warn('Network not ready or Item ID missing');
+                        return false;
+                    }
+                    if (navigator.onLine === false) return false;
+
+                    const clean = JSON.parse(JSON.stringify(item));
+                    await db.collection(route).doc(item.id).set(clean, { merge: true });
+                    return true;
                 } catch (e) {
                     console.error(`Save ${route} failed`, e);
+                    // alert(`Error saving to cloud: ${e.message}`); // Optional: Too noisy?
                     return false;
+                }
+            },
+            deleteFromCloud: async (route, id) => {
+                try {
+                    if (!db || !id) return;
+                    if (navigator.onLine === false) return;
+                    console.log(`Deleting from cloud: ${route}/${id}`);
+                    await db.collection(route).doc(id).delete();
+                } catch (e) {
+                    console.error(`Delete ${route} failed`, e);
                 }
             },
 
@@ -574,13 +673,25 @@
 
             // Assessor Management
             getAssessors: () => JSON.parse(localStorage.getItem('se_assessors') || '[]'),
-            saveAssessor: (assessor) => {
+            saveAssessor: async (assessor) => {
                 const list = window.Utils.getAssessors();
                 if (!assessor.id) assessor.id = Date.now().toString(36) + Math.random().toString(36).substr(2);
                 if (!assessor.createdAt) assessor.createdAt = new Date().toISOString();
-                list.push(assessor);
+
+                // Save Local
+                const existingIndex = list.findIndex(a => a.id === assessor.id);
+                if (existingIndex >= 0) list[existingIndex] = assessor;
+                else list.push(assessor);
                 localStorage.setItem('se_assessors', JSON.stringify(list));
-                window.Utils.saveToCloud('assessors', assessor);
+
+                // Save Cloud
+                const saved = await window.Utils.saveToCloud('assessors', assessor);
+                if (!saved) {
+                    alert('Saved locally. Cloud upload FAILED. Please check internet connection.');
+                } else {
+                    // Success (Silent or small toast if needed, but user wants simplicity)
+                    // The "Upload Success" popup mentioned by user might be from batch save?
+                }
             },
             deleteAssessor: (id) => {
                 window.Utils.deleteFromCloud('assessors', id);
@@ -590,6 +701,7 @@
             authenticateAssessor: (username, password) => {
                 // 1. Check New Assessors Table
                 const fromList = window.Utils.getAssessors().find(a =>
+                    a && a.username && a.password &&
                     String(a.username).trim().toLowerCase() === String(username).trim().toLowerCase() &&
                     String(a.password).trim() === String(password).trim()
                 );
@@ -647,8 +759,8 @@
                     if (response.evidence && Array.isArray(response.evidence)) {
                         for (let i = 0; i < response.evidence.length; i++) {
                             const ev = response.evidence[i];
-                            // If it's a base64 string (starts with data:image), offload it
-                            if (ev.img && ev.img.startsWith('data:image')) {
+                            // If it's a base64 string (starts with data:image or data:video), offload it
+                            if (ev.img && (ev.img.startsWith('data:image') || ev.img.startsWith('data:video'))) {
                                 const blob = window.Utils.base64ToBlob(ev.img);
                                 const key = `ev_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                                 await VideoDB.saveVideo(key, blob); // reusing generic Method
@@ -803,37 +915,54 @@
                 const count = window.Utils.getStudents().length;
                 setDebugInfo(prev => ({ ...prev, studentCount: count }));
 
-                // Server Check
-                fetch(`${SERVER_URL}/health`) // Public endpoint
-                    .then(res => setDebugInfo(prev => ({ ...prev, serverStatus: res.ok ? 'Online' : 'Error' })))
-                    .catch(() => setDebugInfo(prev => ({ ...prev, serverStatus: 'Unreachable' })));
+                // Automatic Sync on Load (Silent)
+                if (navigator.onLine && window.Utils.downloadFromCloud) {
+                    window.Utils.downloadFromCloud(true);
+                }
             }, []);
 
             const handleLogin = (e) => {
                 e.preventDefault();
                 setError('');
-                if (role === 'admin' && username === 'admin' && password === 'admin') {
-                    onLogin({ role: 'admin', name: 'Administrator' });
-                } else if (role === 'student') {
-                    const student = window.Utils.authenticateStudent(username, password);
-                    if (student) onLogin({ role: 'student', ...student });
-                    else setError('Invalid student credentials');
-                } else if (role === 'assessor') {
-                    const assessor = window.Utils.authenticateAssessor(username, password);
-                    if (assessor) {
-                        // Pass assessor details with assigned batch
-                        onLogin({
-                            role: 'assessor',
-                            name: assessor.name,
-                            id: assessor.id,
-                            batchId: assessor.batchId,
-                            sscId: assessor.sscId,
-                            qpId: assessor.qpId
-                        });
+                try {
+                    console.log(`Attempting login: Role=${role}, User=${username}`);
+
+                    if (role === 'admin' && username === 'admin' && password === 'admin') {
+                        console.log("Admin login success");
+                        onLogin({ role: 'admin', name: 'Administrator' });
+                    } else if (role === 'student') {
+                        const student = window.Utils.authenticateStudent(username, password);
+                        if (student) {
+                            console.log("Student login success", student);
+                            onLogin({ role: 'student', ...student });
+                        } else {
+                            console.warn("Student auth failed");
+                            setError('Invalid student credentials');
+                        }
+                    } else if (role === 'assessor') {
+                        const assessor = window.Utils.authenticateAssessor(username, password);
+                        if (assessor) {
+                            console.log("Assessor login success", assessor);
+                            // Pass assessor details with assigned batch
+                            onLogin({
+                                role: 'assessor',
+                                name: assessor.name,
+                                id: assessor.id,
+                                batchId: assessor.batchId,
+                                sscId: assessor.sscId,
+                                qpId: assessor.qpId
+                            });
+                        } else {
+                            console.warn("Assessor auth failed");
+                            setError('Invalid assessor credentials');
+                        }
                     } else {
-                        setError('Invalid assessor credentials');
+                        setError('Invalid credentials');
                     }
-                } else setError('Invalid credentials');
+                } catch (err) {
+                    console.error("Login Error:", err);
+                    alert("Login Error: " + err.message);
+                }
             };
 
             return (
@@ -957,6 +1086,10 @@
                             <button onClick={() => setActiveTab('batches')}
                                 className={`w-full flex items-center gap-3 px-4 py-2 rounded-lg transition-colors ${activeTab === 'batches' ? 'bg-indigo-600' : 'text-slate-300 hover:bg-slate-700'}`}>
                                 <Icons.Users /> <span className="text-sm">Batches</span>
+                            </button>
+                            <button onClick={() => setActiveTab('marks')}
+                                className={`w-full flex items-center gap-3 px-4 py-2 rounded-lg transition-colors ${activeTab === 'marks' ? 'bg-indigo-600' : 'text-slate-300 hover:bg-slate-700'}`}>
+                                <Icons.Edit3 /> <span className="text-sm">Marks Entry</span>
                             </button>
                             <button onClick={() => setActiveTab('results')}
                                 className={`w-full flex items-center gap-3 px-4 py-2 rounded-lg transition-colors ${activeTab === 'results' ? 'bg-indigo-600' : 'text-slate-300 hover:bg-slate-700'}`}>
@@ -1239,321 +1372,709 @@
             );
         };
 
-        // QPs STRUCTURE TAB
-        const QPsTab = ({ onNavigateToNOS }) => {
-            const [qpList, setQPList] = useState([]);
-            const [sscList, setSSCList] = useState([]);
-            const [selectedSSC, setSelectedSSC] = useState('');
-            const [showModal, setShowModal] = useState(false);
-            const [viewMode, setViewMode] = useState('list'); // 'list' | 'upload'
 
-            // Enhanced QP State
-            const [newQP, setNewQP] = useState({
-                sscId: '', name: '', code: '', qpLevel: '',
-                theoryMarks: '', vivaMarks: '', practicalMarks: '', totalMarks: '',
-                theoryCutoff: '', vivaCutoff: '', practicalCutoff: '', overallCutoff: '',
-                isTheoryCutoff: false, isVivaCutoff: false, isPracticalCutoff: false, isOverallCutoff: false
-            });
+
+        // MARKS TAB (New Feature)
+        // MARKS TAB (Refactored for NOS-based Entry)
+        const MarksTab = () => {
+            const [sscList, setSSCList] = useState([]);
+            const [qpList, setQPList] = useState([]);
+            const [batches, setBatches] = useState([]);
+
+            const [selectedSSC, setSelectedSSC] = useState('');
+            const [selectedQP, setSelectedQP] = useState('');
+            const [selectedBatch, setSelectedBatch] = useState('');
+            const [students, setStudents] = useState([]);
+            const [nosList, setNOSList] = useState([]); // Use NOS List
+            const [showGrid, setShowGrid] = useState(false);
+            const [marksData, setMarksData] = useState({});
+            const [attendance, setAttendance] = useState({});
+            const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'cards'
 
             useEffect(() => {
-                setQPList(window.Utils.getQPs());
                 setSSCList(window.Utils.getSSC());
             }, []);
 
-            // Auto-calculate Total Marks
             useEffect(() => {
-                const total = (parseFloat(newQP.theoryMarks) || 0) + (parseFloat(newQP.vivaMarks) || 0) + (parseFloat(newQP.practicalMarks) || 0);
-                setNewQP(prev => ({ ...prev, totalMarks: total || '' }));
-            }, [newQP.theoryMarks, newQP.vivaMarks, newQP.practicalMarks]);
+                if (selectedSSC) {
+                    const allQPs = window.Utils.getQPs();
+                    setQPList(allQPs.filter(q => q.id.startsWith(selectedSSC) || q.sscId === selectedSSC));
+                } else {
+                    setQPList([]);
+                }
+            }, [selectedSSC]);
+
+            useEffect(() => {
+                if (selectedQP) {
+                    const allBatches = window.Utils.getBatches();
+                    setBatches(allBatches.filter(b => b.qpId === selectedQP || b.qpName === qpList.find(q => q.id === selectedQP)?.name));
+                } else {
+                    setBatches([]);
+                }
+            }, [selectedQP]);
+
+            // EXCEL TEMPLATE DOWNLOAD
+            const downloadMarksTemplate = () => {
+                if (!students.length || !nosList.length) {
+                    alert("Please select a Batch with Students and QP content first.");
+                    return;
+                }
+                const rows = [];
+                students.forEach(student => {
+                    nosList.forEach(nos => {
+                        rows.push({
+                            'Enrollment No': student.username || student.id,
+                            'Student Name': student.name,
+                            'NOS Code': nos.code,
+                            'NOS Name': nos.name,
+                            'Theory': '',
+                            'Practical': '',
+                            'Viva': '',
+                            'Attendance (P/A)': 'P'
+                        });
+                    });
+                });
+
+                const ws = XLSX.utils.json_to_sheet(rows);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "Marks Template");
+                XLSX.writeFile(wb, `Marks_Entry_Template_${selectedBatch}.xlsx`);
+            };
+
+            // EXCEL MARKS UPLOAD
+            const handleMarksUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    try {
+                        const bstr = evt.target.result;
+                        const wb = XLSX.read(bstr, { type: 'binary' });
+                        const wsname = wb.SheetNames[0];
+                        const ws = wb.Sheets[wsname];
+                        const data = XLSX.utils.sheet_to_json(ws);
+
+                        let newMarks = { ...marksData };
+                        let newAttendance = { ...attendance };
+                        let count = 0;
+
+                        data.forEach(row => {
+                            // Flexible Key Matching
+                            const findKey = (search) => Object.keys(row).find(k => k.toLowerCase().replace(/[^a-z0-9]/g, '') === search.toLowerCase().replace(/[^a-z0-9]/g, ''));
+
+                            // Match 'Enrollment No' or 'EnrollmentNo' or 'User ID'
+                            const kId = findKey('Enrollment No') || findKey('EnrollmentNo') || findKey('User ID') || findKey('UserID');
+                            const kNOS = findKey('NOS Code') || findKey('NOSCode');
+                            const kTheory = findKey('Theory');
+                            const kPractical = findKey('Practical');
+                            const kViva = findKey('Viva');
+                            const kAtt = findKey('Attendance') || findKey('Attendance (P/A)');
+
+                            const enrollmentVal = row[kId];
+                            const nosCode = row[kNOS];
+
+                            if (enrollmentVal && nosCode) {
+                                // Match Student by Username (U1, U2...) OR ID as fallback
+                                const student = students.find(s =>
+                                    String(s.username).trim().toLowerCase() === String(enrollmentVal).trim().toLowerCase() ||
+                                    String(s.id).trim() === String(enrollmentVal).trim()
+                                );
+                                // Validate NOS
+                                const nos = nosList.find(n => n.code === String(nosCode).trim());
+
+                                if (student && nos) {
+                                    // Attendance
+                                    if (kAtt) {
+                                        const val = String(row[kAtt]).trim().toUpperCase();
+                                        if (val === 'A' || val === 'ABSENT' || val === 'FALSE') {
+                                            newAttendance[student.id] = false;
+                                        } else {
+                                            newAttendance[student.id] = true; // Default or 'P'
+                                        }
+                                    }
+
+                                    // Marks (Only if Present or handled otherwise)
+                                    // We allow entering marks even if absent, but typically they should be 0 or null.
+                                    // User logic: just fill what's there.
+                                    if (kTheory !== undefined) newMarks[`${student.id}_${nos.id}_theory`] = row[kTheory];
+                                    if (kPractical !== undefined) newMarks[`${student.id}_${nos.id}_practical`] = row[kPractical];
+                                    if (kViva !== undefined) newMarks[`${student.id}_${nos.id}_viva`] = row[kViva];
+                                    count++;
+                                }
+                            }
+                        });
+
+                        setMarksData(newMarks);
+                        setAttendance(newAttendance);
+                        alert(`Successfully imported marks for ${count} entries!`);
+                        e.target.value = null; // Reset input
+
+                    } catch (err) {
+                        console.error("Upload Error", err);
+                        alert("Error processing Excel file: " + err.message);
+                    }
+                };
+                reader.readAsBinaryString(file);
+            };
+
+            const handleLoadGrid = () => {
+                if (!selectedBatch || !selectedQP) return;
+
+                // 1. Fetch Students
+                const batchStudents = window.Utils.getStudentsByBatch(selectedBatch);
+                setStudents(batchStudents);
+
+                // 2. Fetch NOS with Aggregated Marks
+                const allNOS = window.Utils.getNOS();
+                const allPCs = window.Utils.getPCs();
+                const qpNOS = allNOS.filter(n => n.qpId === selectedQP).map(nos => {
+                    const myPCs = allPCs.filter(p => p.nosId === nos.id);
+                    return {
+                        ...nos,
+                        theoryMarks: myPCs.reduce((sum, p) => sum + (parseFloat(p.theoryMarks) || 0), 0),
+                        practicalMarks: myPCs.reduce((sum, p) => sum + (parseFloat(p.practicalMarks) || 0), 0),
+                        vivaMarks: myPCs.reduce((sum, p) => sum + (parseFloat(p.vivaMarks) || 0), 0),
+                    };
+                });
+                setNOSList(qpNOS);
+
+                // 3. Load Existing Marks
+                const responses = window.Utils.getResponses().filter(r => r.batchId === selectedBatch && r.examType === 'MarksEntry');
+                const initialMarks = {};
+                const initialAttendance = {};
+
+                responses.forEach(r => {
+                    initialAttendance[r.studentId] = r.attendance !== false; // Default true if undefined
+                    if (r.nosMarks) {
+                        Object.entries(r.nosMarks).forEach(([key, val]) => {
+                            initialMarks[`${r.studentId}_${key}`] = val;
+                        });
+                    }
+                });
+                setMarksData(initialMarks);
+                setAttendance(initialAttendance);
+
+                setShowGrid(true);
+            };
+
+            // Auto-load grid
+            useEffect(() => {
+                if (selectedBatch && selectedQP) {
+                    handleLoadGrid();
+                } else {
+                    setShowGrid(false);
+                }
+            }, [selectedBatch]);
+
+            const handleMarkChange = (studentId, nosId, type, value) => {
+                setMarksData(prev => ({
+                    ...prev,
+                    [`${studentId}_${nosId}_${type}`]: value
+                }));
+            };
+
+            const handleAttendanceChange = (studentId, checked) => {
+                setAttendance(prev => ({ ...prev, [studentId]: checked }));
+            };
+
+            const handleSaveStudent = (studentId) => {
+                // Collect marks for this student
+                const studentMarks = {};
+                let grandTotal = 0;
+
+                nosList.forEach(nos => {
+                    const t = marksData[`${studentId}_${nos.id}_theory`];
+                    const p = marksData[`${studentId}_${nos.id}_practical`];
+                    const v = marksData[`${studentId}_${nos.id}_viva`];
+
+                    if (t) studentMarks[`${nos.id}_theory`] = t;
+                    if (p) studentMarks[`${nos.id}_practical`] = p;
+                    if (v) studentMarks[`${nos.id}_viva`] = v;
+
+                    grandTotal += (parseFloat(t) || 0) + (parseFloat(p) || 0) + (parseFloat(v) || 0);
+                });
+
+                const response = {
+                    id: window.Utils.generateId(),
+                    studentId: studentId,
+                    batchId: selectedBatch,
+                    qpId: selectedQP,
+                    examType: 'MarksEntry',
+                    nosMarks: studentMarks,
+                    attendance: attendance[studentId] !== false,
+                    totalMarks: grandTotal,
+                    submittedAt: new Date().toISOString(),
+                    status: 'Completed'
+                };
+                window.Utils.saveResponse(response);
+                window.Utils.uploadToCloud(true);
+                alert("Saved successfully!");
+            };
+
+            return (
+                <div className="animate-fade-in text-sm p-6">
+                    {/* Header Controls */}
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+                        <h2 className="text-2xl font-bold text-gray-800">Marks Entry (NOS Level)</h2>
+
+                        {showGrid && (
+                            <div className="flex flex-wrap gap-3">
+                                <label className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-bold shadow-sm cursor-pointer text-sm transition-colors">
+                                    <Icons.Upload className="w-4 h-4" /> Upload Excel
+                                    <input type="file" accept=".xlsx, .xls" className="hidden" onChange={handleMarksUpload} />
+                                </label>
+
+                                <button onClick={downloadMarksTemplate} className="bg-white border text-gray-700 hover:bg-gray-50 px-4 py-2 rounded-lg font-bold shadow-sm flex items-center gap-2 text-sm transition-colors">
+                                    <Icons.Download className="w-4 h-4" /> Template
+                                </button>
+
+                                {viewMode === 'grid' ? (
+                                    <button onClick={() => setViewMode('cards')} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-bold shadow-sm flex items-center gap-2 text-sm transition-colors">
+                                        <Icons.Plus className="w-4 h-4" /> Add Marks
+                                    </button>
+                                ) : (
+                                    <button onClick={() => setViewMode('grid')} className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg font-bold shadow-sm flex items-center gap-2 text-sm transition-colors">
+                                        <Icons.Grid className="w-4 h-4" /> Back to Grid
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                        <div>
+                            <label className="block text-sm font-bold text-gray-700 mb-2">Sector Skill Council</label>
+                            <select className="w-full p-2 border rounded-lg" value={selectedSSC} onChange={e => setSelectedSSC(e.target.value)}>
+                                <option value="">Select SSC</option>
+                                {sscList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-bold text-gray-700 mb-2">Qualification Pack</label>
+                            <select className="w-full p-2 border rounded-lg" value={selectedQP} onChange={e => setSelectedQP(e.target.value)} disabled={!selectedSSC}>
+                                <option value="">Select QP</option>
+                                {qpList.map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-bold text-gray-700 mb-2">Batch</label>
+                            <select className="w-full p-2 border rounded-lg" value={selectedBatch} onChange={e => setSelectedBatch(e.target.value)} disabled={!selectedQP}>
+                                <option value="">Select Batch</option>
+                                {batches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                            </select>
+                        </div>
+                    </div>
+                    {/* Grid Area */}
+                    {showGrid ? (
+                        <>
+                            {/* VIEW A: SPREADSHEET GRID */}
+                            {viewMode === 'grid' && (
+                                <div className="flex-1 overflow-auto bg-white rounded-xl shadow border border-gray-200 mt-6 h-[600px] custom-scrollbar">
+                                    <table className="w-max min-w-full text-sm text-left border-collapse whitespace-nowrap">
+                                        <thead className="text-xs text-gray-700 uppercase bg-gray-50 sticky top-0 z-10">
+                                            <tr>
+                                                <th className="px-4 py-3 border-b border-r sticky left-0 bg-gray-50 z-20 w-16" rowSpan="2">#</th>
+                                                <th className="px-4 py-3 border-b border-r sticky left-16 bg-gray-50 z-20 w-64" rowSpan="2">Student</th>
+                                                {nosList.map((nos) => (
+                                                    <th key={nos.id} className="px-4 py-2 border-b border-r text-center bg-gray-100" colSpan="4" title={nos.name}>
+                                                        <div className="font-bold text-indigo-700 truncate max-w-[200px] mx-auto">{nos.code}<br /><span className="text-[10px] text-gray-500 font-normal">{nos.name}</span></div>
+                                                    </th>
+                                                ))}
+                                                <th className="px-4 py-3 border-b border-l bg-gray-200 font-bold text-center w-24" rowSpan="2">Grand Total</th>
+                                            </tr>
+                                            <tr>
+                                                {nosList.map((nos) => (
+                                                    <React.Fragment key={nos.id + '_sub'}>
+                                                        <th className="px-2 py-1 border-b border-r text-center w-20 text-[10px]">Theory</th>
+                                                        <th className="px-2 py-1 border-b border-r text-center w-20 text-[10px]">Practical</th>
+                                                        <th className="px-2 py-1 border-b border-r text-center w-20 text-[10px]">Viva</th>
+                                                        <th className="px-2 py-1 border-b border-r text-center w-20 bg-gray-50 font-bold text-[10px]">Total</th>
+                                                    </React.Fragment>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-100">
+                                            {students.map((s, idx) => {
+                                                let grandTotal = 0;
+                                                return (
+                                                    <tr key={s.id} className="hover:bg-gray-50 transition-colors">
+                                                        <td className="px-4 py-3 border-r sticky left-0 bg-white group-hover:bg-gray-50">{idx + 1}</td>
+                                                        <td className="px-4 py-3 border-r sticky left-16 bg-white group-hover:bg-gray-50 font-medium text-gray-800">
+                                                            {s.name} <br /> <span className="text-xs text-gray-400">{s.id}</span>
+                                                        </td>
+                                                        {nosList.map(nos => {
+                                                            const t = marksData[`${s.id}_${nos.id}_theory`] || '';
+                                                            const p = marksData[`${s.id}_${nos.id}_practical`] || '';
+                                                            const v = marksData[`${s.id}_${nos.id}_viva`] || '';
+                                                            const subTotal = (parseFloat(t) || 0) + (parseFloat(p) || 0) + (parseFloat(v) || 0);
+                                                            grandTotal += subTotal;
+
+                                                            return (
+                                                                <React.Fragment key={nos.id}>
+                                                                    <td className="px-1 py-2 border-r text-center">
+                                                                        <input type="text" className="w-16 p-1 border rounded text-center bg-gray-100 text-gray-500 outline-none text-xs cursor-default"
+                                                                            value={t} readOnly />
+                                                                    </td>
+                                                                    <td className="px-1 py-2 border-r text-center">
+                                                                        <input type="text" className="w-16 p-1 border rounded text-center bg-gray-100 text-gray-500 outline-none text-xs cursor-default"
+                                                                            value={p} readOnly />
+                                                                    </td>
+                                                                    <td className="px-1 py-2 border-r text-center">
+                                                                        <input type="text" className="w-16 p-1 border rounded text-center bg-gray-100 text-gray-500 outline-none text-xs cursor-default"
+                                                                            value={v} readOnly />
+                                                                    </td>
+                                                                    <td className="px-2 py-2 border-r text-center bg-gray-50 font-bold text-xs">
+                                                                        {subTotal > 0 ? subTotal : '-'}
+                                                                    </td>
+                                                                </React.Fragment>
+                                                            );
+                                                        })}
+                                                        <td className="px-4 py-3 border-l bg-gray-100 font-bold text-center text-indigo-700">
+                                                            {grandTotal}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+
+                            {/* VIEW B: STUDENT CARDS */}
+                            {viewMode === 'cards' && (
+                                <div className="flex flex-col gap-6">
+                                    {students.map((s, idx) => (
+                                        <div key={s.id} className="bg-white rounded-xl shadow border border-gray-200 flex flex-col md:flex-row overflow-hidden">
+                                            {/* Left: Student Details */}
+                                            <div className="w-full md:w-1/4 p-6 border-b md:border-b-0 md:border-r bg-gray-50 flex flex-col justify-between">
+                                                <div>
+                                                    <div className="flex items-center gap-3 mb-4">
+                                                        <span className="bg-indigo-100 text-indigo-700 font-bold p-2 rounded-lg text-xs">#{idx + 1}</span>
+                                                        <div>
+                                                            <h3 className="font-bold text-gray-800">{s.name}</h3>
+                                                            <p className="text-xs text-gray-500">{s.id}</p>
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="mb-6">
+                                                        <label className="flex items-center gap-2 text-sm text-gray-700 font-medium cursor-pointer">
+                                                            <input type="checkbox"
+                                                                checked={attendance[s.id] !== false}
+                                                                onChange={e => handleAttendanceChange(s.id, e.target.checked)}
+                                                                className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500"
+                                                            />
+                                                            Mark as Present
+                                                        </label>
+                                                    </div>
+                                                </div>
+
+                                                <button onClick={() => handleSaveStudent(s.id)} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg font-bold shadow-sm flex justify-center items-center gap-2 text-sm transition-colors">
+                                                    <Icons.Save className="w-4 h-4" /> Save
+                                                </button>
+                                            </div>
+
+                                            {/* Right: Marks Grid */}
+                                            <div className="w-full md:w-3/4 p-6 overflow-x-auto">
+                                                <table className="w-full text-sm text-left border-collapse whitespace-nowrap">
+                                                    <thead className="bg-gray-100 text-xs text-gray-700 uppercase">
+                                                        <tr>
+                                                            <th className="px-4 py-2 border rounded-tl-lg">NOS ID</th>
+                                                            <th className="px-4 py-2 border text-center">Total Theory</th>
+                                                            <th className="px-4 py-2 border text-center">Scored Theory</th>
+                                                            <th className="px-4 py-2 border text-center">Total Practical</th>
+                                                            <th className="px-4 py-2 border text-center">Scored Practical</th>
+                                                            <th className="px-4 py-2 border text-center">Total Viva</th>
+                                                            <th className="px-4 py-2 border text-center">Scored Viva</th>
+                                                            <th className="px-4 py-2 border rounded-tr-lg text-center bg-gray-200">Total Scored</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-gray-100">
+                                                        {nosList.map(nos => {
+                                                            const t = marksData[`${s.id}_${nos.id}_theory`] || 0;
+                                                            const p = marksData[`${s.id}_${nos.id}_practical`] || 0;
+                                                            const v = marksData[`${s.id}_${nos.id}_viva`] || 0;
+                                                            const totalObtained = parseFloat(t) + parseFloat(p) + parseFloat(v);
+                                                            return (
+                                                                <tr key={nos.id}>
+                                                                    <td className="px-4 py-3 border font-medium text-indigo-600 w-32">
+                                                                        {nos.code}
+                                                                        <div className="text-[10px] text-gray-400 truncate max-w-[150px]" title={nos.name}>{nos.name}</div>
+                                                                    </td>
+                                                                    <td className="px-4 py-2 border text-center text-gray-500">{nos.theoryMarks || '-'}</td>
+                                                                    <td className="px-4 py-2 border">
+                                                                        <input type="number" min="0" className="w-full p-1 border rounded text-center focus:ring-1 focus:ring-indigo-500 outline-none"
+                                                                            value={marksData[`${s.id}_${nos.id}_theory`] || ''} onChange={e => handleMarkChange(s.id, nos.id, 'theory', e.target.value)} />
+                                                                    </td>
+                                                                    <td className="px-4 py-2 border text-center text-gray-500">{nos.practicalMarks || '-'}</td>
+                                                                    <td className="px-4 py-2 border">
+                                                                        <input type="number" min="0" className="w-full p-1 border rounded text-center focus:ring-1 focus:ring-indigo-500 outline-none"
+                                                                            value={marksData[`${s.id}_${nos.id}_practical`] || ''} onChange={e => handleMarkChange(s.id, nos.id, 'practical', e.target.value)} />
+                                                                    </td>
+                                                                    <td className="px-4 py-2 border text-center text-gray-500">{nos.vivaMarks || '-'}</td>
+                                                                    <td className="px-4 py-2 border">
+                                                                        <input type="number" min="0" className="w-full p-1 border rounded text-center focus:ring-1 focus:ring-indigo-500 outline-none"
+                                                                            value={marksData[`${s.id}_${nos.id}_viva`] || ''} onChange={e => handleMarkChange(s.id, nos.id, 'viva', e.target.value)} />
+                                                                    </td>
+                                                                    <td className="px-4 py-2 border text-center font-bold bg-gray-50 text-indigo-700">
+                                                                        {totalObtained > 0 ? totalObtained : '-'}
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </>
+                    ) : (selectedBatch && (
+                        <div className="p-10 text-center bg-white rounded-xl border border-dashed border-gray-300 mt-6">
+                            <Icons.Edit3 className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+                            <h3 className="text-xl font-bold text-gray-700">Ready to Enter Marks</h3>
+                            <p className="text-gray-500">Grid will load automatically.</p>
+                        </div>
+                    ))}
+                </div>
+            );
+        };
+
+        // QPS TAB
+        const QPsTab = ({ onNavigateToNOS }) => {
+            const [sscList, setSSCList] = useState([]);
+            const [qpList, setQPList] = useState([]);
+            const [selectedSSC, setSelectedSSC] = useState('');
+            const [showModal, setShowModal] = useState(false);
+            const [newQP, setNewQP] = useState({ name: '', code: '', sscId: '', qpLevel: '', theoryMarks: 0, practicalMarks: 0, vivaMarks: 0, totalMarks: 0, isTheoryCutoff: false, isPracticalCutoff: false, isVivaCutoff: false, isOverallCutoff: false });
+            const [viewMode, setViewMode] = useState('list');
+
+            useEffect(() => {
+                const load = () => {
+                    setSSCList(window.Utils.getSSC());
+                    setQPList(window.Utils.getQPs());
+                };
+                load();
+                window.addEventListener('cloud-sync-complete', load);
+                return () => window.removeEventListener('cloud-sync-complete', load);
+            }, []);
 
             const handleCreate = (e) => {
                 e.preventDefault();
-                const qp = { ...newQP, id: window.Utils.generateId(), createdAt: new Date().toISOString() };
+                const qp = {
+                    ...newQP,
+                    id: newQP.id || window.Utils.generateId(),
+                    totalMarks: (parseFloat(newQP.theoryMarks) || 0) + (parseFloat(newQP.practicalMarks) || 0) + (parseFloat(newQP.vivaMarks) || 0)
+                };
                 window.Utils.saveQP(qp);
                 window.Utils.uploadToCloud(true);
                 setQPList(window.Utils.getQPs());
                 setShowModal(false);
-                setNewQP({
-                    sscId: '', name: '', code: '', qpLevel: '',
-                    theoryMarks: '', vivaMarks: '', practicalMarks: '', totalMarks: '',
-                    isTheoryCutoff: false, isVivaCutoff: false, isPracticalCutoff: false, isOverallCutoff: false
-                });
+                setNewQP({ name: '', code: '', sscId: '', qpLevel: '', theoryMarks: 0, practicalMarks: 0, vivaMarks: 0, totalMarks: 0 });
             };
 
-            const filteredQPs = selectedSSC ? qpList.filter(q => q.sscId === selectedSSC) : [];
-            const getSSCName = (id) => sscList.find(s => s.id === id)?.name || id;
+            const handleEdit = (qp) => {
+                setNewQP(qp);
+                setShowModal(true);
+            };
+
+            const filteredQPs = selectedSSC ? qpList.filter(q => q.sscId === selectedSSC) : qpList;
 
             if (viewMode === 'upload') {
-                return <UploadNOSPC onBack={() => {
-                    setViewMode('list');
-                    // Refresh all lists
-                    setQPList(window.Utils.getQPs());
-                    // Note: NOS/PC lists are managed in NOSPC_Tab if this component is QPSTab, 
-                    // but looking at context this seems to be QPSTab. 
-                    // However, UploadNOSPC imports NOS/PCs.
-                    // If we are in QPSTab, we might not have setNOSList here. 
-                    // Let's check where NOSPC_Tab is. 
-                    // Actually, looking at the file view above, this component seems to be 'QPSTab' or similar (line 629 in full file?).
-                    // Wait, the previous search result showed 'NOSPC_Tab' at line 862. 
-                    // The line 690 block is inside 'QPSTab' (based on 'handleCreate' for QPs).
-                    // If the user is uploading NOS/PC from QPSTab, we need to ensure *that* tab refreshes if it displays them.
-                    // But QPSTab mainly shows QPs. 
-                    // Let's look at where the user saw the issue. "not coming and another one is i am not uploading 20 noses".
-                    // The user is likely in 'NOSPC_Tab' (line 862) OR accessing upload from there.
-                    // Let's re-read the code snippet for 672-691. It has `handleCreate` for QPs. So this IS QPSTab.
-
-                    // If the user clicks "Upload NOS & PC" from QPSTab (line 720?), and then goes back, 
-                    // they are still in QPSTab. They would need to go to "NOS & PC" tab to see them.
-                    // The "not coming" might be because they expect to see them *here* or when they switch tabs.
-                    // But wait, there is a `NOSPC_Tab` component later. 
-
-                    // Let's assume for now we just want to return to list. 
-                    // BUT, I need to check if UploadNOSPC is used in NOSPC_Tab too.
-                }} selectedSSC={selectedSSC} sscList={sscList} />;
+                return (
+                    <div className="p-6 animate-fade-in">
+                        <button onClick={() => setViewMode('list')} className="mb-4 text-indigo-600 font-bold flex items-center gap-2">← Back to List</button>
+                        <h2 className="text-xl font-bold mb-4">Upload NOS & PC</h2>
+                        <div className="bg-white p-6 rounded shadow border border-dashed border-gray-300 text-center">
+                            <p className="text-gray-500">Excel Upload feature coming soon.</p>
+                        </div>
+                    </div>
+                )
             }
 
             return (
                 <div className="animate-fade-in text-sm">
-                    <h2 className="text-2xl font-bold mb-6 text-gray-800">Qualification Packs</h2>
-
-                    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 mb-6">
-                        <div className="flex justify-between items-center">
-                            <div className="flex items-center gap-4 w-1/3">
-                                <label className="text-sm font-bold text-gray-700 whitespace-nowrap">Sector Skill Council:</label>
-                                <select className="w-full p-2 border rounded-md bg-gray-50" value={selectedSSC} onChange={e => setSelectedSSC(e.target.value)}>
-                                    <option value="">Select SSC</option>
-                                    {sscList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                                </select>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                                <div className="flex items-center gap-2 text-gray-600 font-medium mr-4">
-                                    <Icons.Book />
-                                    <span>Total Records : {filteredQPs.length}</span>
-                                </div>
-                                {selectedSSC && (
-                                    <>
-                                        <button onClick={() => {
-                                            if (!confirm("This will find duplicate Qualification Packs (same code) and merge them into one. Proceed?")) return;
-
-                                            // 1. Group QPs by Code
-                                            const allQPs = window.Utils.getQPs();
-                                            const groups = {};
-                                            allQPs.forEach(q => {
-                                                const code = (q.code || '').trim().toLowerCase();
-                                                if (!code) return;
-                                                if (!groups[code]) groups[code] = [];
-                                                groups[code].push(q);
-                                            });
-
-                                            let fixedGroupsStr = "";
-                                            let totalFixed = 0;
-
-                                            // 2. Process groups with > 1 QP
-                                            Object.keys(groups).forEach(code => {
-                                                const duplicates = groups[code];
-                                                if (duplicates.length > 1) {
-                                                    // Keep the FIRST one as master (or the one with most data? safely just first for now)
-                                                    const master = duplicates[0];
-                                                    const ghosts = duplicates.slice(1);
-
-                                                    // 3. Re-link Data
-
-                                                    // NOS
-                                                    const allNOS = window.Utils.getNOS();
-                                                    let nosUpdates = 0;
-                                                    const updatedNOS = allNOS.map(n => {
-                                                        if (ghosts.some(g => g.id === n.qpId)) {
-                                                            nosUpdates++;
-                                                            return { ...n, qpId: master.id };
-                                                        }
-                                                        return n;
-                                                    });
-                                                    if (nosUpdates > 0) window.Utils.saveNOSList ? window.Utils.saveNOSList(updatedNOS) : localStorage.setItem('se_nos', JSON.stringify(updatedNOS));
-
-                                                    // Batches (theoryPaperId, practicalPaperId might link to QP? No, batches link to Question Papers usually, but let's check Batch schema in BatchesTab)
-                                                    // Checking BatchesTab filter logic: tPaper.sscId... batches link to papers. 
-                                                    // But wait, the user's screenshot showed "Qualification Pack" dropdown in "Add Batch".
-                                                    // That dropdown sets 'assignment' or similar. 
-                                                    // Let's re-read Add Batch logic if possible, or just be safe.
-                                                    // If batches have 'qpId' directly? 
-                                                    // Looking at lines 3220, it filters by papers. 
-                                                    // However, line 2940 showing "Select QP" implies batches might save QP selection.
-                                                    // Let's check 'assignQPDef' or 'selectedAssignQP' usage in 'handleAddBatch'.
-                                                    // It seems batches might store 'qpId' if configured. 
-                                                    // Let's update Batches just in case they hold direct references. 
-                                                    const allBatches = window.Utils.getBatches();
-                                                    const updatedBatches = allBatches.map(b => {
-                                                        if (ghosts.some(g => g.id === b.qpId)) return { ...b, qpId: master.id }; // Future proofing
-                                                        return b;
-                                                    });
-                                                    window.Utils.updateBatches(updatedBatches);
-
-                                                    // 4. Delete Ghosts
-                                                    const ghostIDs = ghosts.map(g => g.id);
-                                                    const newQPList = window.Utils.getQPs().filter(q => !ghostIDs.includes(q.id));
-                                                    localStorage.setItem('se_qp', JSON.stringify(newQPList));
-
-                                                    fixedGroupsStr += `\n- ${master.code} (Merged ${duplicates.length} records)`;
-                                                    totalFixed++;
-                                                }
-                                            });
-
-                                            if (totalFixed > 0) {
-                                                alert(`Success! Merged duplicates for:${fixedGroupsStr}\n\nRefreshed page.`);
-                                                setQPList(window.Utils.getQPs());
-                                            } else {
-                                                alert("No duplicate Qualification Packs found.");
-                                            }
-
-                                        }} className="bg-orange-500 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-orange-600 shadow-sm" title="Fix Duplicate Codes">
-                                            <Icons.Layers /> Cleanup Duplicates
-                                        </button>
-
-                                        <button className="bg-gray-600 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-gray-700">
-                                            Export To <Icons.ChevronDown />
-                                        </button>
-                                        <button onClick={() => { setNewQP(prev => ({ ...prev, sscId: selectedSSC })); setShowModal(true); }} className="bg-red-500 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-red-600">
-                                            <Icons.Plus /> Add New
-                                        </button>
-                                        <button onClick={() => setViewMode('upload')} className="bg-red-500 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-red-600">
-                                            <Icons.Upload /> Upload NOS & PC
-                                        </button>
-                                    </>
-                                )}
-                            </div>
+                    <div className="flex justify-between items-center mb-6">
+                        <h2 className="text-2xl font-bold text-gray-800">Qualification Packs</h2>
+                        <div className="flex gap-2">
+                            <select className="border p-2 rounded text-gray-600" value={selectedSSC} onChange={e => setSelectedSSC(e.target.value)}>
+                                <option value="">All Sectors</option>
+                                {sscList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </select>
+                            <button onClick={() => { setNewQP({ ...newQP, sscId: selectedSSC }); setShowModal(true); }} className="bg-indigo-600 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-indigo-700 shadow-sm">
+                                <Icons.Plus className="w-4 h-4" /> Add New
+                            </button>
                         </div>
                     </div>
 
 
 
-                    {selectedSSC && (
-                        <div className="bg-white rounded shadow border overflow-x-auto">
-                            <table className="w-full min-w-[1200px]">
-                                <thead className="bg-gray-50 border-b">
-                                    <tr>
-                                        <th className="p-3 text-left font-bold text-gray-700 border-r">Qualification Pack ID</th>
-                                        <th className="p-3 text-left font-bold text-gray-700 border-r">Name</th>
-                                        <th className="p-3 text-left font-bold text-gray-700 border-r">Level</th>
-                                        <th className="p-3 text-left font-bold text-gray-700 border-r">Total Marks</th>
-                                        <th className="p-3 text-left font-bold text-gray-700 border-r">Total Theory Marks</th>
-                                        <th className="p-3 text-left font-bold text-gray-700 border-r">Total Practical Marks</th>
-                                        <th className="p-3 text-left font-bold text-gray-700 border-r">Total Viva Marks</th>
-                                        <th className="p-3 text-left font-bold text-gray-700 border-r">Theory Cutoff</th>
-                                        <th className="p-3 text-left font-bold text-gray-700 border-r">Practical Cutoff</th>
-                                        <th className="p-3 text-left font-bold text-gray-700 border-r">Viva Cutoff</th>
-                                        <th className="p-3 text-left font-bold text-gray-700 border-r">Overall Cutoff</th>
-                                        <th className="p-3 text-center font-bold text-gray-700">Actions</th>
+                    <div className="bg-white rounded shadow border overflow-x-auto">
+                        <table className="w-full min-w-[1200px]">
+                            <thead className="bg-gray-50 border-b">
+                                <tr>
+                                    <th className="p-3 text-left font-bold text-gray-700 border-r">Qualification Pack ID</th>
+                                    <th className="p-3 text-left font-bold text-gray-700 border-r">Name</th>
+                                    <th className="p-3 text-left font-bold text-gray-700 border-r">Level</th>
+                                    <th className="p-3 text-left font-bold text-gray-700 border-r">Total Marks</th>
+                                    <th className="p-3 text-left font-bold text-gray-700 border-r">Total Theory Marks</th>
+                                    <th className="p-3 text-left font-bold text-gray-700 border-r">Total Practical Marks</th>
+                                    <th className="p-3 text-left font-bold text-gray-700 border-r">Total Viva Marks</th>
+                                    <th className="p-3 text-left font-bold text-gray-700 border-r">Theory Cutoff</th>
+                                    <th className="p-3 text-left font-bold text-gray-700 border-r">Practical Cutoff</th>
+                                    <th className="p-3 text-left font-bold text-gray-700 border-r">Viva Cutoff</th>
+                                    <th className="p-3 text-left font-bold text-gray-700 border-r">Overall Cutoff</th>
+                                    <th className="p-3 text-center font-bold text-gray-700">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y">
+                                {filteredQPs.map((qp) => (
+                                    <tr key={qp.id} className="hover:bg-gray-50">
+                                        <td className="p-3 font-bold text-red-500 border-r">{qp.code}</td>
+                                        <td className="p-3 border-r max-w-xs truncate" title={qp.name}>{qp.name}</td>
+                                        <td className="p-3 border-r">{qp.qpLevel || 'N/A'}</td>
+                                        <td className="p-3 border-r">{Number(qp.totalMarks).toFixed(2)}</td>
+                                        <td className="p-3 border-r">{Number(qp.theoryMarks).toFixed(2)}</td>
+                                        <td className="p-3 border-r">{Number(qp.practicalMarks).toFixed(2)}</td>
+                                        <td className="p-3 border-r">{Number(qp.vivaMarks).toFixed(2)}</td>
+                                        <td className="p-3 border-r">{qp.isTheoryCutoff ? (qp.theoryCutoff || '0.00') : 'N/A'}</td>
+                                        <td className="p-3 border-r">{qp.isPracticalCutoff ? (qp.practicalCutoff || '0.00') : 'N/A'}</td>
+                                        <td className="p-3 border-r">{qp.isVivaCutoff ? (qp.vivaCutoff || '0.00') : 'N/A'}</td>
+                                        <td className="p-3 border-r">{qp.isOverallCutoff ? (qp.overallCutoff || '0.00') : 'N/A'}</td>
+                                        <td className="p-3 text-center flex justify-center gap-2">
+                                            <button onClick={() => onNavigateToNOS(qp)} className="bg-cyan-700 text-white px-3 py-1 rounded text-xs flex items-center gap-1 hover:bg-cyan-800">
+                                                <Icons.Eye /> NOS
+                                            </button>
+                                            <button onClick={() => handleEdit(qp)} className="bg-cyan-700 text-white p-1 rounded hover:bg-cyan-800" title="Edit QP">
+                                                <Icons.Edit3 />
+                                            </button>
+                                            <button onClick={() => { if (confirm('Delete?')) { window.Utils.deleteQP(qp.id); setQPList(window.Utils.getQPs()); } }}
+                                                className="text-red-600 p-1 hover:bg-red-50 rounded"><Icons.Trash2 /></button>
+                                        </td>
                                     </tr>
-                                </thead>
-                                <tbody className="divide-y">
-                                    {filteredQPs.map((qp) => (
-                                        <tr key={qp.id} className="hover:bg-gray-50">
-                                            <td className="p-3 font-bold text-red-500 border-r">{qp.code}</td>
-                                            <td className="p-3 border-r max-w-xs truncate" title={qp.name}>{qp.name}</td>
-                                            <td className="p-3 border-r">{qp.qpLevel || 'N/A'}</td>
-                                            <td className="p-3 border-r">{Number(qp.totalMarks).toFixed(2)}</td>
-                                            <td className="p-3 border-r">{Number(qp.theoryMarks).toFixed(2)}</td>
-                                            <td className="p-3 border-r">{Number(qp.practicalMarks).toFixed(2)}</td>
-                                            <td className="p-3 border-r">{Number(qp.vivaMarks).toFixed(2)}</td>
-                                            <td className="p-3 border-r">{qp.isTheoryCutoff ? (qp.theoryCutoff || '0.00') : 'N/A'}</td>
-                                            <td className="p-3 border-r">{qp.isPracticalCutoff ? (qp.practicalCutoff || '0.00') : 'N/A'}</td>
-                                            <td className="p-3 border-r">{qp.isVivaCutoff ? (qp.vivaCutoff || '0.00') : 'N/A'}</td>
-                                            <td className="p-3 border-r">{qp.isOverallCutoff ? (qp.overallCutoff || '0.00') : 'N/A'}</td>
-                                            <td className="p-3 text-center flex justify-center gap-2">
-                                                <button onClick={() => onNavigateToNOS(qp)} className="bg-cyan-700 text-white px-3 py-1 rounded text-xs flex items-center gap-1 hover:bg-cyan-800">
-                                                    <Icons.Eye /> NOS
-                                                </button>
-                                                <button className="bg-cyan-700 text-white p-1 rounded hover:bg-cyan-800">
-                                                    <Icons.Edit3 />
-                                                </button>
-                                                <button onClick={() => { if (confirm('Delete?')) { window.Utils.deleteQP(qp.id); setQPList(window.Utils.getQPs()); } }}
-                                                    className="text-red-600 p-1 hover:bg-red-50 rounded"><Icons.Trash2 /></button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                    {filteredQPs.length === 0 && <tr><td colSpan="12" className="p-8 text-center text-gray-400">No records found</td></tr>}
-                                </tbody>
-                            </table>
-                        </div>
-                    )}
-                    {showModal && (
-                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 overflow-y-auto">
-                            <div className="bg-white rounded-xl p-8 w-full max-w-4xl my-8">
-                                <h3 className="text-2xl font-bold mb-6 text-gray-800">Add Qualification Pack</h3>
-                                <form onSubmit={handleCreate} className="space-y-6">
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                ))}
+                                {filteredQPs.length === 0 && <tr><td colSpan="12" className="p-8 text-center text-gray-400">No records found</td></tr>}
+                            </tbody>
+                        </table>
+                    </div>
+                    {
+                        showModal && (
+                            <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+                                <div className="bg-white rounded-xl p-8 w-full max-w-4xl my-8">
+                                    <h3 className="text-2xl font-bold mb-6 text-gray-800">{newQP.id ? 'Edit Qualification Pack' : 'Add Qualification Pack'}</h3>
+                                    <form onSubmit={handleCreate} className="space-y-6">
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
 
-                                        {/* Row 1 */}
-                                        <div className="space-y-1">
-                                            <label className="font-semibold text-gray-700">SSC</label>
-                                            <select required className="w-full px-4 py-2 border rounded-lg" value={newQP.sscId} onChange={e => setNewQP({ ...newQP, sscId: e.target.value })}>
-                                                <option value="">Select SSC</option>
-                                                {sscList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                                            </select>
-                                        </div>
-                                        <div className="space-y-1">
-                                            <label className="font-semibold text-gray-700">Qualification Pack Name</label>
-                                            <input required className="w-full px-4 py-2 border rounded-lg" value={newQP.name} onChange={e => setNewQP({ ...newQP, name: e.target.value })} />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <label className="font-semibold text-gray-700">Qualification Pack ID</label>
-                                            <input required className="w-full px-4 py-2 border rounded-lg" value={newQP.code} onChange={e => setNewQP({ ...newQP, code: e.target.value })} />
-                                        </div>
+                                            {/* Row 1 */}
+                                            <div className="space-y-1">
+                                                <label className="font-semibold text-gray-700">SSC</label>
+                                                <select required className="w-full px-4 py-2 border rounded-lg" value={newQP.sscId} onChange={e => setNewQP({ ...newQP, sscId: e.target.value })}>
+                                                    <option value="">Select SSC</option>
+                                                    {sscList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                                </select>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="font-semibold text-gray-700">Qualification Pack Name</label>
+                                                <input required className="w-full px-4 py-2 border rounded-lg" value={newQP.name} onChange={e => setNewQP({ ...newQP, name: e.target.value })} />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="font-semibold text-gray-700">Qualification Pack ID</label>
+                                                <input required className="w-full px-4 py-2 border rounded-lg" value={newQP.code} onChange={e => setNewQP({ ...newQP, code: e.target.value })} />
+                                            </div>
 
-                                        {/* Row 2 */}
-                                        <div className="space-y-1">
-                                            <label className="font-semibold text-gray-700">Qualification Pack Level</label>
-                                            <input className="w-full px-4 py-2 border rounded-lg" value={newQP.qpLevel} onChange={e => setNewQP({ ...newQP, qpLevel: e.target.value })} />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <label className="font-semibold text-gray-700">Total Theory Marks</label>
-                                            <input type="number" className="w-full px-4 py-2 border rounded-lg" value={newQP.theoryMarks} onChange={e => setNewQP({ ...newQP, theoryMarks: e.target.value })} />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <label className="font-semibold text-gray-700">Total Viva Marks</label>
-                                            <input type="number" className="w-full px-4 py-2 border rounded-lg" value={newQP.vivaMarks} onChange={e => setNewQP({ ...newQP, vivaMarks: e.target.value })} />
+                                            {/* Row 2 */}
+                                            <div className="space-y-1">
+                                                <label className="font-semibold text-gray-700">Qualification Pack Level</label>
+                                                <input className="w-full px-4 py-2 border rounded-lg" value={newQP.qpLevel} onChange={e => setNewQP({ ...newQP, qpLevel: e.target.value })} />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="font-semibold text-gray-700">Total Theory Marks</label>
+                                                <input type="number" className="w-full px-4 py-2 border rounded-lg" value={newQP.theoryMarks} onChange={e => setNewQP({ ...newQP, theoryMarks: e.target.value })} />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="font-semibold text-gray-700">Total Viva Marks</label>
+                                                <input type="number" className="w-full px-4 py-2 border rounded-lg" value={newQP.vivaMarks} onChange={e => setNewQP({ ...newQP, vivaMarks: e.target.value })} />
+                                            </div>
+
+                                            {/* Row 3 */}
+                                            <div className="space-y-1">
+                                                <label className="font-semibold text-gray-700">Total Practical Marks</label>
+                                                <input type="number" className="w-full px-4 py-2 border rounded-lg" value={newQP.practicalMarks} onChange={e => setNewQP({ ...newQP, practicalMarks: e.target.value })} />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="font-semibold text-gray-700">Total Marks</label>
+                                                <input readOnly className="w-full px-4 py-2 border rounded-lg bg-gray-100" value={newQP.totalMarks} />
+                                            </div>
                                         </div>
 
-                                        {/* Row 3 */}
-                                        <div className="space-y-1">
-                                            <label className="font-semibold text-gray-700">Total Practical Marks</label>
-                                            <input type="number" className="w-full px-4 py-2 border rounded-lg" value={newQP.practicalMarks} onChange={e => setNewQP({ ...newQP, practicalMarks: e.target.value })} />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <label className="font-semibold text-gray-700">Total Marks</label>
-                                            <input readOnly className="w-full px-4 py-2 border rounded-lg bg-gray-100" value={newQP.totalMarks} />
-                                        </div>
-                                    </div>
+                                        <div className="space-y-4 pt-4 border-t">
+                                            <div className="flex flex-col gap-4">
+                                                <div className="flex items-center gap-6">
+                                                    <label className="flex items-center gap-2 cursor-pointer w-64">
+                                                        <input type="checkbox" className="w-5 h-5 rounded" checked={newQP.isTheoryCutoff} onChange={e => setNewQP({ ...newQP, isTheoryCutoff: e.target.checked })} />
+                                                        <span className="font-medium text-gray-700">Is theory cutoff available</span>
+                                                    </label>
+                                                    {newQP.isTheoryCutoff && (
+                                                        <div className="flex items-center gap-2 animate-fade-in">
+                                                            <label className="text-xs font-bold text-gray-500">Value:</label>
+                                                            <input type="number" step="0.01" className="w-24 px-3 py-1 border rounded-lg text-sm" placeholder="40.00" value={newQP.theoryCutoff} onChange={e => setNewQP({ ...newQP, theoryCutoff: e.target.value })} />
+                                                        </div>
+                                                    )}
+                                                </div>
 
-                                    {/* Checkboxes */}
-                                    <div className="space-y-4 pt-4 border-t">
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                            <input type="checkbox" className="w-5 h-5 rounded" checked={newQP.isTheoryCutoff} onChange={e => setNewQP({ ...newQP, isTheoryCutoff: e.target.checked })} />
-                                            <span className="font-medium text-gray-700">Is theory cutoff available</span>
-                                        </label>
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                            <input type="checkbox" className="w-5 h-5 rounded" checked={newQP.isVivaCutoff} onChange={e => setNewQP({ ...newQP, isVivaCutoff: e.target.checked })} />
-                                            <span className="font-medium text-gray-700">Is Viva cutoff available</span>
-                                        </label>
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                            <input type="checkbox" className="w-5 h-5 rounded" checked={newQP.isPracticalCutoff} onChange={e => setNewQP({ ...newQP, isPracticalCutoff: e.target.checked })} />
-                                            <span className="font-medium text-gray-700">Is practical cutoff available</span>
-                                        </label>
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                            <input type="checkbox" className="w-5 h-5 rounded" checked={newQP.isOverallCutoff} onChange={e => setNewQP({ ...newQP, isOverallCutoff: e.target.checked })} />
-                                            <span className="font-medium text-gray-700">Is overall cutoff available</span>
-                                        </label>
-                                    </div>
+                                                <div className="flex items-center gap-6">
+                                                    <label className="flex items-center gap-2 cursor-pointer w-64">
+                                                        <input type="checkbox" className="w-5 h-5 rounded" checked={newQP.isVivaCutoff} onChange={e => setNewQP({ ...newQP, isVivaCutoff: e.target.checked })} />
+                                                        <span className="font-medium text-gray-700">Is Viva cutoff available</span>
+                                                    </label>
+                                                    {newQP.isVivaCutoff && (
+                                                        <div className="flex items-center gap-2 animate-fade-in">
+                                                            <label className="text-xs font-bold text-gray-500">Value:</label>
+                                                            <input type="number" step="0.01" className="w-24 px-3 py-1 border rounded-lg text-sm" placeholder="40.00" value={newQP.vivaCutoff} onChange={e => setNewQP({ ...newQP, vivaCutoff: e.target.value })} />
+                                                        </div>
+                                                    )}
+                                                </div>
 
-                                    <div className="flex gap-4 justify-end pt-6 border-t">
-                                        <button type="button" onClick={() => setShowModal(false)} className="px-6 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium border border-gray-300">Cancel</button>
-                                        <button type="submit" className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium shadow-md">Create</button>
-                                    </div>
-                                </form>
+                                                <div className="flex items-center gap-6">
+                                                    <label className="flex items-center gap-2 cursor-pointer w-64">
+                                                        <input type="checkbox" className="w-5 h-5 rounded" checked={newQP.isPracticalCutoff} onChange={e => setNewQP({ ...newQP, isPracticalCutoff: e.target.checked })} />
+                                                        <span className="font-medium text-gray-700">Is practical cutoff available</span>
+                                                    </label>
+                                                    {newQP.isPracticalCutoff && (
+                                                        <div className="flex items-center gap-2 animate-fade-in">
+                                                            <label className="text-xs font-bold text-gray-500">Value:</label>
+                                                            <input type="number" step="0.01" className="w-24 px-3 py-1 border rounded-lg text-sm" placeholder="40.00" value={newQP.practicalCutoff} onChange={e => setNewQP({ ...newQP, practicalCutoff: e.target.value })} />
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                <div className="flex items-center gap-6">
+                                                    <label className="flex items-center gap-2 cursor-pointer w-64">
+                                                        <input type="checkbox" className="w-5 h-5 rounded" checked={newQP.isOverallCutoff} onChange={e => setNewQP({ ...newQP, isOverallCutoff: e.target.checked })} />
+                                                        <span className="font-medium text-gray-700">Is overall cutoff available</span>
+                                                    </label>
+                                                    {newQP.isOverallCutoff && (
+                                                        <div className="flex items-center gap-2 animate-fade-in">
+                                                            <label className="text-xs font-bold text-gray-500">Value:</label>
+                                                            <input type="number" step="0.01" className="w-24 px-3 py-1 border rounded-lg text-sm" placeholder="40.00" value={newQP.overallCutoff} onChange={e => setNewQP({ ...newQP, overallCutoff: e.target.value })} />
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex gap-4 justify-end pt-6 border-t">
+                                            <button type="button" onClick={() => setShowModal(false)} className="px-6 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium border border-gray-300">Cancel</button>
+                                            <button type="submit" className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium shadow-md">
+                                                {newQP.id ? 'Save Changes' : 'Create'}
+                                            </button>
+                                        </div>
+                                    </form>
+                                </div>
                             </div>
-                        </div>
-                    )}
+                        )
+                    }
                 </div>
             );
         };
@@ -2065,6 +2586,7 @@
                     // Validation: Check Total Theory Marks
                     const currentQPDef = masterQPList.find(q => q.id === filterQPId);
                     if (currentQPDef) {
+                        // 1. Validate Total Theory Marks
                         const uploadedTheoryMarks = questions.reduce((sum, q) => {
                             if (q.questionType !== 'VIVA') {
                                 return sum + q.totalMarks;
@@ -2074,6 +2596,28 @@
                         const theoryMismatch = Math.abs(uploadedTheoryMarks - parseFloat(currentQPDef.theoryMarks || 0)) > 0.1;
                         if (theoryMismatch) {
                             alert(`Error: Uploaded Theory Marks (${uploadedTheoryMarks}) do not match QP Theory Marks (${currentQPDef.theoryMarks}).`);
+                            return;
+                        }
+
+                        // 2. Validate PC Coverage (STRICT)
+                        // Fetch all PCs for this QP
+                        const allNOS = window.Utils.getNOS();
+                        const qpNOS = allNOS.filter(n => n.qpId === filterQPId);
+                        const allPCs = window.Utils.getPCs();
+                        const requiredPCs = allPCs.filter(p => qpNOS.some(n => n.id === p.nosId));
+
+                        // Collect PCs covered by questions
+                        const coveredPCIds = new Set();
+                        questions.forEach(q => {
+                            if (q.pcMapping) {
+                                Object.keys(q.pcMapping).forEach(key => coveredPCIds.add(key));
+                            }
+                        });
+
+                        const missingPCs = requiredPCs.filter(p => !coveredPCIds.has(p.id));
+
+                        if (missingPCs.length > 0) {
+                            alert(`Validation Error: The uploaded Question Paper does not cover all Performance Criteria (PCs).\n\nMissing PCs:\n${missingPCs.map(p => p.code).join(', ')}\n\nPlease ensure every PC defined in the Qualification Pack is assessed.`);
                             return;
                         }
                     }
@@ -2114,16 +2658,17 @@
                         <div className="grid grid-cols-[150px_1fr] gap-y-6 gap-x-8 items-center max-w-3xl">
                             <label className="font-bold text-gray-700">Select Sector :</label>
                             <select className="w-full p-2 border border-gray-300 rounded text-sm outline-none focus:border-blue-500 transition-all text-gray-600"
-                                value={selectedSSC} onChange={e => setSelectedSSC(e.target.value)}>
+                                value={selectedSSC} onChange={e => { setSelectedSSC(e.target.value); setFilterQPId(''); }}>
                                 <option value="">--Select Sector--</option>
                                 {sscList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                             </select>
 
                             <label className="font-bold text-gray-700">Qualification Pack:</label>
                             <select className="w-full p-2 border border-gray-300 rounded text-sm outline-none focus:border-blue-500 transition-all text-gray-600"
-                                value={filterQPId} onChange={e => setFilterQPId(e.target.value)}>
+                                value={filterQPId} onChange={e => setFilterQPId(e.target.value)}
+                                disabled={!selectedSSC}>
                                 <option value="">Select QP</option>
-                                {masterQPList.filter(q => !selectedSSC || q.sscId === selectedSSC).map(q => (
+                                {masterQPList.filter(q => selectedSSC && q.sscId == selectedSSC).map(q => (
                                     <option key={q.id} value={q.id}>{q.name}</option>
                                 ))}
                             </select>
@@ -2156,7 +2701,7 @@
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
-                                {qpList.filter(q => selectedSSC && filterQPId && q.sscId === selectedSSC && q.qpId === filterQPId).map((qp, idx) => (
+                                {qpList.filter(q => selectedSSC && filterQPId && q.sscId == selectedSSC && q.qpId == filterQPId).map((qp, idx) => (
                                     <tr key={qp.id} className="hover:bg-gray-50 transition-colors">
                                         <td className="p-4 border-r text-center text-gray-500">{idx + 1}</td>
                                         <td className="p-4 border-r">
@@ -2177,7 +2722,7 @@
                                         </td>
                                     </tr>
                                 ))}
-                                {qpList.filter(q => selectedSSC && filterQPId && q.sscId === selectedSSC && q.qpId === filterQPId).length === 0 && (
+                                {qpList.filter(q => selectedSSC && filterQPId && q.sscId == selectedSSC && q.qpId == filterQPId).length === 0 && (
                                     <tr>
                                         <td colSpan="6" className="p-8 text-center text-gray-400">
                                             {(!selectedSSC || !filterQPId) ? 'Please select Sector and Qualification Pack to view Question Papers' : 'No question papers found for the selected criteria.'}
@@ -2286,62 +2831,30 @@
             const socketRef = useRef(null);
             const peerRef = useRef(null);
 
-            // WebRTC Signaling Logic
+            // WebRTC Signaling Logic (Stubbed for now - requires Firebase RT Database or Firestore Signaling)
             useEffect(() => {
-                // Initialize Socket
-                socketRef.current = io(SERVER_URL);
-                const socket = socketRef.current;
-                // Fix: Join the specific student's room, not just the batch room
-                const roomId = `${batch.id}_${student.id}`;
+                const roomId = `${batch.id}_${student.id}`; // Define roomId for cleanup
 
-                socket.emit('join-room', roomId, 'assessor');
+                console.warn("Socket.io features (Viva Signaling) are currently disabled. Real-time signaling needs to be migrated to Firestore.");
 
-                // Initialize PeerConnection
+                // Initialize PeerConnection (still needed for WebRTC, but signaling is manual/stubbed)
                 peerRef.current = new RTCPeerConnection({
                     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
                 });
                 const pc = peerRef.current;
 
-                // Handle ICE Candidates
-                pc.onicecandidate = (event) => {
-                    if (event.candidate) {
-                        socket.emit('signal', { roomId, signal: { type: 'candidate', candidate: event.candidate } });
-                    }
-                };
-
-                // Handle Remote Stream (Student Video)
+                // Handle Remote Stream (Student Video) - still relevant for receiving stream
                 pc.ontrack = (event) => {
                     setRemoteStream(event.streams[0]);
                 };
 
-                // Signaling Handlers
-                socket.on('user-connected', async (userId) => {
-                    console.log('User Connected:', userId);
-                    // Create Offer (Assessor initiates as they are the host)
-                    const offer = await pc.createOffer();
-                    await pc.setLocalDescription(offer);
-                    socket.emit('signal', { roomId, signal: { type: 'offer', sdp: offer } });
-                });
-
-                socket.on('signal', async (data) => {
-                    if (!data.signal) return;
-
-                    if (data.signal.type === 'answer') {
-                        await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
-                    } else if (data.signal.type === 'candidate') {
-                        await pc.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
-                    } else if (data.signal.type === 'offer') {
-                        // If student initiated (reconnect?), handle offer
-                        await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
-                        const answer = await pc.createAnswer();
-                        await pc.setLocalDescription(answer);
-                        socket.emit('signal', { roomId, signal: { type: 'answer', sdp: answer } });
-                    }
-                });
+                // No socket.emit or socket.on calls here as per instruction.
+                // Signaling will need to be implemented via Firestore/RTDB.
 
                 return () => {
-                    socket.disconnect();
+                    // Cleanup PeerConnection
                     if (peerRef.current) peerRef.current.close();
+                    // No socket.disconnect() as socket is not initialized/used for signaling
                 };
             }, [batch.id, student.id]);
 
@@ -3158,12 +3671,17 @@
                         </div>
                         <div className="space-y-1">
                             <label className="text-xs font-bold text-gray-700">Qualification Pack :</label>
-                            <select className="w-full p-2 border rounded-md bg-gray-50 text-sm" value={filterQP} onChange={e => setFilterQP(e.target.value)}>
+                            <select
+                                className="w-full p-2 border rounded-md text-sm bg-gray-50"
+                                value={filterQP}
+                                onChange={e => setFilterQP(e.target.value)}
+                                disabled={!filterSSC}
+                            >
                                 <option value="">Select QP</option>
-                                {(() => {
+                                {filterSSC && (() => {
                                     const uniqueCodes = new Set();
                                     return qpList.filter(q => {
-                                        if (!filterSSC || q.sscId === filterSSC) {
+                                        if (q.sscId === filterSSC) {
                                             const code = (q.code || '').trim().toLowerCase();
                                             if (uniqueCodes.has(code)) return false;
                                             uniqueCodes.add(code);
@@ -3487,7 +4005,7 @@
                                                 <div>
                                                     <label className="block text-xs font-bold text-gray-700 mb-1">Sector Skill Council</label>
                                                     <select className="w-full p-2 border border-gray-300 rounded text-sm bg-gray-100"
-                                                        value={newBatch.sscId} disabled={true}>
+                                                        value={newBatch.sscId} onChange={e => setNewBatch({ ...newBatch, sscId: e.target.value, qpId: '' })}>
                                                         <option value="">Select Sector</option>
                                                         {sscList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                                                     </select>
@@ -3495,9 +4013,10 @@
                                                 <div>
                                                     <label className="block text-xs font-bold text-gray-700 mb-1">Qualification Pack</label>
                                                     <select className="w-full p-2 border border-gray-300 rounded text-sm bg-gray-100"
-                                                        value={newBatch.qpId} disabled={true}>
+                                                        value={newBatch.qpId} onChange={e => setNewBatch({ ...newBatch, qpId: e.target.value })}
+                                                        disabled={!newBatch.sscId}>
                                                         <option value="">Select QP</option>
-                                                        {qpList.map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
+                                                        {qpList.filter(q => q.sscId == newBatch.sscId).map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
                                                     </select>
                                                 </div>
                                             </div>
@@ -3731,6 +4250,7 @@
 
                                         {/* Modal Filters */}
                                         <div className="space-y-4 mb-4 bg-gray-50 p-3 rounded">
+
                                             <div>
                                                 <label className="text-xs font-bold text-gray-700 block mb-1">Sector Skill Council</label>
                                                 <select className="w-full p-2 border rounded text-sm" value={assignSSC} onChange={e => { setAssignSSC(e.target.value); setAssignQPDef(''); setSelectedAssignQP(''); }}>
@@ -3740,28 +4260,31 @@
                                             </div>
                                             <div>
                                                 <label className="text-xs font-bold text-gray-700 block mb-1">Qualification Pack</label>
-                                                <select className="w-full p-2 border rounded text-sm" value={assignQPDef} onChange={e => { setAssignQPDef(e.target.value); setSelectedAssignQP(''); }}>
+                                                <select className="w-full p-2 border rounded text-sm"
+                                                    value={assignQPDef}
+                                                    onChange={e => { setAssignQPDef(e.target.value); setSelectedAssignQP(''); }}
+                                                    disabled={!assignSSC}>
                                                     <option value="">Select QP</option>
-                                                    {(() => {
+                                                    {assignSSC && (() => {
                                                         const uniqueCodes = new Set();
-                                                        return qpList.filter(q => {
-                                                            if (!assignSSC || q.sscId === assignSSC) {
-                                                                const code = (q.code || '').trim().toLowerCase();
-                                                                if (uniqueCodes.has(code)) return false;
-                                                                uniqueCodes.add(code);
-                                                                return true;
-                                                            }
-                                                            return false;
-                                                        }).map(q => <option key={q.id} value={q.id}>{q.name} ({q.code})</option>);
+                                                        return qpList.filter(q => q.sscId == assignSSC).map(q => { // Relaxed Filter: Match SSC
+                                                            const code = (q.code || '').trim().toLowerCase();
+                                                            if (uniqueCodes.has(code)) return null;
+                                                            uniqueCodes.add(code);
+                                                            return <option key={q.id} value={q.id}>{q.name} ({q.code})</option>;
+                                                        });
                                                     })()}
                                                 </select>
                                             </div>
                                         </div>
 
                                         <label className="text-xs font-bold text-gray-700 block mb-1">Select Question Paper</label>
-                                        <select className="w-full px-4 py-2 border rounded mb-4" value={selectedAssignQP} onChange={e => setSelectedAssignQP(e.target.value)}>
+                                        <select className="w-full px-4 py-2 border rounded mb-4"
+                                            value={selectedAssignQP}
+                                            onChange={e => setSelectedAssignQP(e.target.value)}
+                                            disabled={!assignQPDef}>
                                             <option value="">Select Question Paper</option>
-                                            {questionPapers.filter(qp => (!assignSSC || qp.sscId === assignSSC) && (!assignQPDef || qp.qpId === assignQPDef)).map(qp => <option key={qp.id} value={qp.id}>{qp.qpName}</option>)}
+                                            {assignQPDef && questionPapers.filter(qp => qp.qpId == assignQPDef).map(qp => <option key={qp.id} value={qp.id}>{qp.qpName}</option>)}
                                         </select>
                                         <div className="flex gap-2">
                                             <button onClick={handleAssignQP} className="flex-1 bg-indigo-600 text-white py-2 rounded hover:bg-indigo-700">Assign</button>
@@ -3869,11 +4392,20 @@
                     } else {
                         setStatus('error');
                     }
-                }).catch(() => setStatus('error'));
+                }).catch((e) => {
+                    console.error("VideoPlayerDB Error", e);
+                    setStatus('error');
+                });
             }, [videoKey]);
 
             if (status === 'loading') return <div className="p-4 text-gray-500 text-center text-xs">Loading Video...</div>;
-            if (status === 'error') return <div className="p-4 text-red-500 text-center text-xs">Video File Not Found</div>;
+            if (status === 'error') return (
+                <div className="p-4 text-red-500 text-center text-xs bg-red-50 border border-red-100 rounded">
+                    <p className="font-bold">Video File Not Found</p>
+                    <p className="font-mono mt-1 text-[10px] text-gray-400">Key: {videoKey}</p>
+                    <p className="text-[10px] text-gray-500 mt-2">Try refreshing (Ctrl+F5) to re-sync.</p>
+                </div>
+            );
 
             return (
                 <div className="relative">
@@ -3909,15 +4441,42 @@
             });
 
             useEffect(() => {
-                const load = () => {
-                    setAssessors(window.Utils.getAssessors());
-                    setSSCList(window.Utils.getSSC());
-                    setQPList(window.Utils.getQPs());
-                    setBatches(window.Utils.getBatches());
+                let unsubscribe = () => { };
+
+                const setupRealtimeListener = () => {
+                    if (db) { // Check global db instance
+                        try {
+                            unsubscribe = db.collection('assessors').onSnapshot((snapshot) => {
+                                const list = snapshot.docs.map(doc => doc.data());
+                                // 1. Update State (Visual)
+                                setAssessors(list);
+                                // 2. Update Local Storage (Persistence)
+                                localStorage.setItem('se_assessors', JSON.stringify(list));
+                            }, (error) => {
+                                console.error("Realtime Assessor Sync Error:", error);
+                            });
+                        } catch (e) {
+                            console.error("Setup Listener Failed", e);
+                        }
+                    } else {
+                        // Retry if DB not ready yet (race condition on load)
+                        setTimeout(setupRealtimeListener, 500);
+                    }
                 };
-                load();
-                window.addEventListener('cloud-sync-complete', load);
-                return () => window.removeEventListener('cloud-sync-complete', load);
+
+                // Initial Load from LocalStorage (Instant UI)
+                const localData = window.Utils.getAssessors();
+                setAssessors(localData);
+
+                // Start Listening
+                setupRealtimeListener();
+
+                // Other lists that don't need realtime usually (refreshed on mount)
+                setSSCList(window.Utils.getSSC());
+                setQPList(window.Utils.getQPs());
+                setBatches(window.Utils.getBatches());
+
+                return () => unsubscribe();
             }, []);
 
             const handleSaveAssessor = () => {
@@ -4344,13 +4903,9 @@
                                             {hasResponse ? 'Present' : 'Absent'}
                                         </span>
                                     </div>
-                                    {examType === 'Photo' ? (
-                                        <button onClick={() => viewEvidence(s)} className={`font-medium hover:underline flex items-center gap-1 ${hasResponse ? 'text-green-700' : 'text-red-700'}`}>
-                                            View Evidence <Icons.ChevronRight className="w-4 h-4" />
-                                        </button>
-                                    ) : (
-                                        <span className="text-gray-400 text-sm italic">Marks Only</span>
-                                    )}
+                                    <button onClick={() => viewEvidence(s)} className={`font-medium hover:underline flex items-center gap-1 ${hasResponse ? 'text-green-700' : 'text-red-700'}`}>
+                                        View Evidence (All) <Icons.ChevronRight className="w-4 h-4" />
+                                    </button>
                                 </div>
                             );
                         })}
@@ -4406,23 +4961,47 @@
                 let evList = [];
                 let targetResp = null;
 
+                // AGGREGATE VIEW: Fetch ALL evidence (Manual + Auto) for this student
+                // We want to show proctoring evidence for Theory/Practical/Viva as well.
+                const allStudentResponses = responses.filter(r => r.studentId === s.id);
+
+                // 1. Find the specific response for this exam type (for answers/grades)
+                targetResp = allStudentResponses.find(r => r.examType === examType);
+
+                // 2. Gather Evidence:
+                // If it's the specific exam, get its evidence.
+                // ALSO, include any 'MANUAL' or 'AUTO' evidence captured during this session timeframe (simplified: just show all evidence for now or specific types)
+
+                // Current Requirement: Show "system recorded video and photos" (likely MANUAL/AUTO type) for Writing (Theory) Exam.
+                // So we should NOT filter out MANUAL types for Theory.
+
+                if (targetResp && targetResp.evidence) {
+                    evList = [...targetResp.evidence];
+                }
+
+                // If no specific response found (e.g. absent but maybe has evidence?), keep evList empty or check others.
+
+                // Optional: If 'Photo' tab is selected, maybe ONLY show Manual? 
+                // But user wants to see it IN Theory tab.
+                // So let's just show whatever evidence exists in the targetResponse.
+
+                // NOTE: If the auto-captures are stored in a SEPARATE response object (e.g. strict 'Photo' type response),
+                // we might need to merge them. But usually, they are attached to the current exam response or a generic one.
+                // Let's assume they are attached to the actual exam response or we look for ANY evidence.
+
                 if (examType === 'Photo') {
-                    // AGGREGATE VIEW: Fetch ALL manual captures from ALL responses for this student
-                    const allStudentResponses = responses.filter(r => r.studentId === s.id);
+                    // For Photo Tab, we aggregate ALL evidence from ALL exams to show a gallery
                     allStudentResponses.forEach(r => {
                         if (r.evidence && Array.isArray(r.evidence)) {
-                            const manuals = r.evidence.filter(e => e.type && e.type.includes('MANUAL'));
-                            evList = [...evList, ...manuals];
+                            evList = [...evList, ...r.evidence];
                         }
                     });
-                    // For 'Photo' view, we don't display specific answers/grades, just the gallery
-                    targetResp = { evidence: evList };
                 } else {
-                    // SPECIFIC EXAM VIEW (Theory/Practical/Viva)
-                    // HIDE Manual Captures (they belong to Photo tab)
-                    targetResp = responses.find(r => r.studentId === s.id && r.examType === examType);
+                    // For Theory/Practical, show evidence attached to THIS exam.
+                    // PREVIOUSLY: filtered out MANUAL.
+                    // NOW: Include everything (Manual + Auto + Uploads).
                     if (targetResp && targetResp.evidence) {
-                        evList = targetResp.evidence.filter(e => !e.type || !e.type.includes('MANUAL'));
+                        evList = targetResp.evidence;
                     }
                 }
 
@@ -4501,31 +5080,20 @@
                 // The AssessorPortal flow sets 'examType' correctly based on user selection.
 
                 const newEvidence = { img: data, time: new Date().toISOString(), type };
-                const responses = window.Utils.getResponses();
-                const existingIdx = responses.findIndex(r => r.studentId === student.id && r.examType === examType);
+                // Correctly delegate to the utility function which handles IndexedDB offloading and merging
+                // We pass a partial object with just the new evidence.
+                const partialResponse = {
+                    studentId: student.id,
+                    batchId: batch.id,
+                    examType: examType,
+                    evidence: [newEvidence],
+                    // Ensure status is tracked if new
+                    status: 'draft'
+                };
 
-                if (existingIdx >= 0) {
-                    responses[existingIdx].evidence.push(newEvidence);
-                    // If it's a photo for 'Viva', it stays in 'Viva'. If it's for 'Photo', it stays in 'Photo'.
-                } else {
-                    responses.push({
-                        studentId: student.id,
-                        batchId: batch.id,
-                        examType: examType, // Critical: Saves to the specific bucket
-                        evidence: [newEvidence],
-                        answers: {},
-                        assessorMarks: {},
-                        status: 'draft'
-                    });
-                }
-                window.Utils.saveResponse(responses); // This behaves as a bulk save or we should use saveResponse per item?
-                // Wait, window.Utils.saveResponse seems to expect a list or single?
-                // Let's check Utils.saveResponse implementation. 
-                // It might be better to just modify the specific object and save.
-                localStorage.setItem(DB_KEYS.RESPONSES, JSON.stringify(responses));
-                window.Utils.uploadToCloud(true);
+                window.Utils.saveResponse(partialResponse);
 
-                // Update local state
+                // Update local state (UI)
                 setEvidence(prev => [...prev, newEvidence]);
             };
 
@@ -5185,17 +5753,13 @@
                 loadQPs();
                 window.addEventListener('cloud-sync-complete', loadQPs);
 
-                // Real-Time Sync Listener
-                const socket = io(SERVER_URL);
-                socket.on('data-change', (data) => {
-                    console.log("Remote Change Detected:", data);
-                    // Trigger Silent Cloud Download
-                    window.Utils.downloadFromCloud(true);
-                });
+                // Real-Time Sync (Commented out Socket.io)
+                // In Firebase, we can use db.collection(...).onSnapshot()
+                // const socket = io(SERVER_URL);
+                // socket.on('data-change', (data) => { ... });
 
                 return () => {
                     window.removeEventListener('cloud-sync-complete', loadQPs);
-                    socket.disconnect();
                 };
             }, []);
 
@@ -5238,6 +5802,7 @@
                             {activeTab === 'location' && <LocationTab />}
 
                             {activeTab === 'subjects' && <SubjectsTab />}
+                            {activeTab === 'marks' && <MarksTab />}
                             {activeTab === 'qps' && <QPsTab onNavigateToNOS={handleNavigateToNOS} />}
                             {activeTab === 'nos' && <NOSPC_Tab selectedQP={selectedQPForNOS} onBack={() => { setSelectedQPForNOS(null); setActiveTab('qps'); }} />}
                             {activeTab === 'questionPapers' && <QuestionPapersTab />}
@@ -5526,91 +6091,26 @@
             useEffect(() => {
                 if (examMode !== 'VivaLive' && examMode !== 'VivaWait') return;
 
-                // Initialize Socket
-                socketRef.current = io(SERVER_URL);
-                const socket = socketRef.current;
-                // Unique Room for 1-on-1: BatchID_StudentID
-                const roomId = `${user.batchId}_${user.id}`;
+                console.warn("Socket.io features (Viva Signaling) are currently disabled for students. Real-time signaling needs to be migrated to Firestore.");
 
-                console.log("Student Joining Room:", roomId);
-                socket.emit('join-room', roomId, user.id); // Student joins
-
-                // Listen for Admit Signal (Assessor Joined)
-                socket.on('user-connected', (userId) => {
-                    // If we are waiting, and someone joins (Assessor), we are admitted?
-                    // Or explicit signal? 'user-connected' is enough proof Assessor is here.
-                    if (examMode === 'VivaWait') {
-                        console.log("Assessor Joined, Auto-Admitting...");
-                        setExamMode('VivaLive');
-                    }
-                });
-
-                if (examMode === 'VivaWait') return; // Don't setup Peer yet
-
-                // Initialize PeerConnection
+                // Initialize PeerConnection (Stubbed)
                 peerRef.current = new RTCPeerConnection({
                     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
                 });
                 const pc = peerRef.current;
 
                 // Add Local Video Tracks
-                // Wait for video element to be ready or get stream from elsewhere?
-                // We likely already have stream usage in 'student-cam-viva' or we should get it fresh.
                 navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
                     const video = document.getElementById('student-cam-viva');
-                    if (video) video.srcObject = stream; // Self view
-
-                    stream.getTracks().forEach(track => {
-                        pc.addTrack(track, stream);
-                    });
+                    if (video) video.srcObject = stream;
+                    stream.getTracks().forEach(track => pc.addTrack(track, stream));
                 });
 
-                // Handle Turn/Stun Candidates
-                pc.onicecandidate = (event) => {
-                    if (event.candidate) {
-                        socket.emit('signal', { roomId, signal: { type: 'candidate', candidate: event.candidate } });
-                    }
-                };
-
-                // Handle Remote Stream (Assessor Video)
                 pc.ontrack = (event) => {
                     setRemoteStream(event.streams[0]);
                 };
 
-                // Signaling
-                // user-connected handled above for admit, typically Assessor initiates offer so we wait for signal
-
-                socket.on('signal', async (data) => {
-                    if (!data.signal) return;
-
-                    // FIX: If we get an OFFER while waiting, we should accept it and Go Live!
-                    if (examMode === 'VivaWait' && data.signal.type === 'offer') {
-                        console.log("Offer Received while waiting -> Auto Admit");
-                        setExamMode('VivaLive');
-                        // The rest of the logic will run on next render in VivaLive block? 
-                        // No, we need to handle it NOW or ensure state persists.
-                        // Actually, switching mode unmounts this effect and mounts the VivaLive one?
-                        // If we switch mode, this component re-renders. We might lose this specific socket event?
-                        // Better to stay in "VivaWait" visually but start the logic? 
-                        // No, simpliest fix: Switch mode, and Assessor will retry or we can manually join.
-                        return; // Let re-render handle it? No, Assessor won't send offer again unless we ask.
-                        // Better approach: Manual Button backing this up.
-                    }
-
-                    if (data.signal.type === 'offer') {
-                        await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
-                        const answer = await pc.createAnswer();
-                        await pc.setLocalDescription(answer);
-                        socket.emit('signal', { roomId, signal: { type: 'answer', sdp: answer } });
-                    } else if (data.signal.type === 'answer') {
-                        await pc.setRemoteDescription(new RTCSessionDescription(data.signal.sdp));
-                    } else if (data.signal.type === 'candidate') {
-                        await pc.addIceCandidate(new RTCIceCandidate(data.signal.candidate));
-                    }
-                });
-
                 return () => {
-                    socket.disconnect();
                     if (peerRef.current) peerRef.current.close();
                 };
             }, [examMode, user.batchId]);
@@ -6529,166 +7029,39 @@
 
             // AUTO-DOWNLOAD ON START (Silent) & PERIODIC SYNC
             useEffect(() => {
-                if (!sessionStorage.getItem('cleanup_done_v3')) {
-                    setTimeout(async () => {
-                        // Force prompt one last time to ensure clean slate
-                        if (confirm("FINAL ATTEMPT: Delete ALL Data & Stop Cloud Restore?")) {
-                            try {
-                                const status = document.createElement('div');
-                                status.style.position = 'fixed';
-                                status.style.top = '0';
-                                status.style.left = '0';
-                                status.style.width = '100%';
-                                status.style.height = '100%';
-                                status.style.background = 'rgba(255,0,0,0.9)';
-                                status.style.color = 'white';
-                                status.style.display = 'flex';
-                                status.style.alignItems = 'center';
-                                status.style.justifyContent = 'center';
-                                status.style.fontSize = '2rem';
-                                status.style.zIndex = '99999';
-                                status.innerText = 'WIPING DATA... PLEASE WAIT';
-                                document.body.appendChild(status);
-
-                                // 1. Explicitly Set Empty Arrays (Overwrite)
-                                Object.values(DB_KEYS).forEach(k => localStorage.setItem(k, '[]'));
-
-                                // 2. Upload Empty State to Cloud (Force)
-                                await window.Utils.uploadToCloud(true);
-
-                                // 3. Clear Local Storage
-                                localStorage.clear();
-
-                                // 4. Set Flag to SKIP download on next reload
-                                sessionStorage.setItem('just_wiped', 'true');
-
-                                alert("Done. Reloading...");
-                                window.location.reload();
-                            } catch (e) {
-                                alert("Error: " + e.message);
-                            }
-                        }
-                        sessionStorage.setItem('cleanup_done_v3', 'true');
-                    }, 500);
-                }
+                // HEAL DATA BEFORE SYNC
+                if (window.Utils.healData) window.Utils.healData();
 
                 const initSync = async () => {
-                    if (navigator.onLine) {
+                    if (navigator.onLine && db) {
                         try {
-                            // FIX: Only download if we DID NOT just wipe
-                            if (!sessionStorage.getItem('just_wiped')) {
-                                console.log("Initial Auto-Sync...");
-                                await window.Utils.downloadFromCloud(true);
-                            } else {
-                                console.log("Skipping Initial Sync (Just Wiped)");
-                                sessionStorage.removeItem('just_wiped'); // Reset for next time
-                            }
+                            console.log("Initial Auto-Sync...");
+                            await window.Utils.downloadFromCloud(true);
                         } catch (e) { console.error("Initial Sync Failed", e); }
                     }
                 };
                 initSync();
 
-                // NUCLEAR WIPE LOGIC (V5) - Appended to ensure it runs regardless of previous block failures
-                // NUCLEAR WIPE LOGIC (V7) - Aggressive SSC/QP targeting
-                if (false) { // CLEANUP DISABLED (System Clean)
-                    setTimeout(async () => {
-                        if (confirm("FINAL CLEANUP: We found some leftover data (SSC/QPs).\nWe will now forcibly delete them.\n\nClick OK.")) {
-                            const status = document.createElement('div');
-                            Object.assign(status.style, {
-                                position: 'fixed', top: '0', left: '0', width: '100vw', height: '100vh',
-                                background: 'rgba(50, 0, 0, 0.95)', color: 'white', display: 'flex',
-                                flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                                zIndex: '999999', fontSize: '1.5rem', fontFamily: 'monospace'
-                            });
-                            document.body.appendChild(status);
-
-                            const log = (msg) => { status.innerHTML = `<h1>DELETING...</h1><p>${msg}</p>`; };
-
-                            try {
-                                // 1. Set Block Flag *Immediately*
-                                sessionStorage.setItem('just_wiped', 'true');
-                                localStorage.removeItem('ssc');
-                                localStorage.removeItem('qps');
-                                localStorage.removeItem('nos');
-                                localStorage.removeItem('pcs');
-
-                                const DB = {
-                                    'ssc': window.Utils.getSSC(),
-                                    'qps': window.Utils.getQPs(),
-                                };
-                                let total = Object.values(DB).reduce((a, b) => a + b.length, 0);
-                                let current = 0;
-
-                                // 2. FORCE DELETE Generic Routes
-                                for (const [type, items] of Object.entries(DB)) {
-                                    for (const item of items) {
-                                        current++;
-                                        await window.Utils.deleteFromCloud(type, item.id);
-                                        await new Promise(r => setTimeout(r, 100)); // Slower, heavier delete
-                                    }
-                                }
-
-                                // 3. Double Tap: Send empty arrays to overwrite
-                                localStorage.setItem('ssc', '[]');
-                                localStorage.setItem('qps', '[]');
-                                localStorage.setItem('nos', '[]');
-                                localStorage.setItem('pcs', '[]');
-                                await window.Utils.uploadToCloud(true);
-
-                                localStorage.clear();
-                                alert("SSC/QP CLEANUP DONE.");
-                                window.location.reload();
-                            } catch (e) {
-                                alert("Cleanup Failed: " + e.message);
-                                status.remove();
-                            }
-                        }
-                        sessionStorage.setItem('cleanup_done_v7', 'true');
-                    }, 1000);
-                }
-
-                // Periodic Poll for Updates (Every 20 seconds) - Dynamic Data
                 const pollInterval = setInterval(async () => {
-                    if (navigator.onLine) {
+                    if (navigator.onLine && db) {
                         try {
-                            // console.log("Background Polling..."); // Too noisy
                             await window.Utils.downloadFromCloud(true);
                         } catch (e) { }
                     }
-                }, 20000);
+                }, 30000); // 30s polling
 
                 return () => clearInterval(pollInterval);
             }, []);
 
-            // Real-Time Socket Sync
-            useEffect(() => {
-                const handleDataChange = async () => {
-                    console.log("Remote Data Change Detected -> Auto-Syncing...");
-                    if (navigator.onLine) {
-                        try {
-                            await window.Utils.downloadFromCloud(true);
-                            // Optional: Force re-render if needed, but Utils updates localStorage
-                            // and components using localStorage or listeners will update.
-                            window.dispatchEvent(new Event('cloud-sync-complete'));
-                        } catch (e) {
-                            console.error("Auto-Sync Failed", e);
-                        }
-                    }
-                };
 
-                socket.on('data-change', handleDataChange);
-
-                return () => {
-                    socket.off('data-change', handleDataChange);
-                };
-            }, []);
             // useEffect(() => { if (window.lucide) window.lucide.createIcons(); }); // REMOVED: Managed by LucideIcon
             if (!user) return <LoginScreen onLogin={setUser} />;
             return (
                 <div className="min-h-screen bg-slate-50">
-                    <header className="bg-white shadow-sm border-b px-8 py-4 flex justify-between items-center">
+                    <header className="bg-white shadow-sm border-b px-8 py-4 flex justify-between items-center sticky top-0 z-50">
                         <div className="flex items-center gap-2 font-bold text-xl text-gray-800">
-                            <div className="bg-indigo-600 text-white rounded p-1">N</div> NSXpertise
+                            <div className="bg-indigo-600 text-white rounded p-1">N</div>
+                            NSXpertise
                         </div>
                         <div className="flex gap-4 items-center">
                             {/* GLOBAL CLOUD SYNC */}
@@ -6702,11 +7075,13 @@
                                 </button>
                             </div>
 
-                            <span className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs font-bold uppercase">{user.role}</span>
-                            <button onClick={() => setUser(null)} className="text-gray-500 hover:text-red-600 text-sm">Logout</button>
+                            <div className="flex items-center gap-3 pl-4 border-l">
+                                <span className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs font-bold uppercase">{user.role}</span>
+                                <button onClick={() => setUser(null)} className="text-gray-500 hover:text-red-600 text-sm font-medium transition-colors">Logout</button>
+                            </div>
                         </div>
                     </header>
-                    <main>
+                    <main className="p-6">
                         <ErrorBoundary>
                             {user.role === 'admin' && <AdminDashboard />}
                             {user.role === 'student' && <StudentPortal user={user} />}
