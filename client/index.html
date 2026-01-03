@@ -341,8 +341,11 @@
                 for (const [route, key] of Object.entries(MAPPING)) {
                     try {
                         const snap = await db.collection(route).get();
+
+                        // NEW LOGIC: Handle both Data and Empty/Deleted Collections
+                        let data = [];
                         if (!snap.empty) {
-                            const data = snap.docs.map(doc => doc.data());
+                            data = snap.docs.map(doc => doc.data());
 
                             if (key === DB_KEYS.RESPONSES) {
                                 // Handle Response Images Offloading (Base64 -> IndexedDB)
@@ -369,14 +372,12 @@
                                                     // Concatenate
                                                     const fullBase64 = chunks.map(c => c.data).join('');
 
-                                                    // Restore to 'ev.img' for the next step (IndexedDB offloading)
-                                                    ev.img = fullBase64;
-                                                    delete ev.isChunked; // Clean up so it looks like a normal huge file now
-                                                    delete ev.chunkIds;
-                                                    console.log(`Reassembly complete. Size: ${fullBase64.length}`);
-                                                } catch (err) {
-                                                    console.error("Chunk Reassembly Failed", err);
-                                                    ev.img = null; // Mark as failed
+                                                    // Rehydrate
+                                                    data[i].evidence[j] = { ...ev, img: fullBase64, isChunked: false, chunkIds: null };
+                                                    // We don't delete chunks here (keep them on server until delete)
+                                                } catch (e) {
+                                                    console.error("Chunk Reassembly Failed", e);
+                                                    // Keep partial data or set error flag
                                                 }
                                             }
 
@@ -399,10 +400,16 @@
                                     }
                                 }
                             }
-
-                            localStorage.setItem(key, JSON.stringify(data));
-                            success++;
+                        } else {
+                            // SNAPSHOT IS EMPTY implies Cloud is Empty.
+                            // We MUST overwrite local storage with [] to reflect the deletion.
+                            // console.log(`Cloud collection ${route} is empty. Clearing local ${key}.`);
                         }
+
+                        // Always save, even if data is []
+                        localStorage.setItem(key, JSON.stringify(data));
+                        success++;
+
                     } catch (e) { console.error(`Download error ${route}`, e); }
                 }
                 if (!silent) alert(`Downloaded ${success} collections from Firebase.`);
@@ -635,25 +642,73 @@
                 // localStorage.setItem(DB_KEYS.BATCHES, '[]');
             },
             factoryReset: async () => {
-                // Wipe Local Storage
-                localStorage.clear();
+                if (!confirm("⚠️ FACTORY RESET WARNING ⚠️\n\nThis will PERMANENTLY DELETE ALL DATA from both your device AND the Cloud.\n\nThis includes data from ALL connected devices.\n\nAre you sure you want to proceed?")) return;
 
-                // Optional: Wipe Backend (If API exists)
-                // For now, we iterate and delete known entities from cloud if simple clear isn't supported
-                // But honestly, local clear + reload is "Factory Reset" for this client-heavy app.
-                // If cloud sync behaves correctly, it might re-download. 
-                // So we should strictly try to delete basic configs from cloud too.
+                const statusBtn = document.getElementById('sync-status-text');
+                const originalText = statusBtn ? statusBtn.innerText : '';
 
                 try {
-                    // Delete major entities from cloud to prevent re-sync
-                    const entities = ['ssc', 'qps', 'nos', 'pcs', 'batches', 'students', 'assessors', 'responses'];
-                    // We don't have a 'delete all' API, so we rely on the user understanding this is a local reset mostly,
-                    // OR we iterate what we have in memory before clearing.
+                    if (!navigator.onLine) {
+                        alert("You are offline. Factory Reset requires an internet connection to wipe the cloud.");
+                        return;
+                    }
 
-                    // Best effort: Local Clear is the primary request "delete dummy data in website"
-                } catch (e) { console.error(e); }
+                    if (statusBtn) statusBtn.innerText = "Connecting to Cloud...";
 
-                window.location.reload();
+                    // List of all collections to wipe
+                    const collections = [
+                        'ssc', 'qps', 'nos', 'pcs',
+                        'batches', 'students', 'assessors',
+                        'responses', 'question_papers',
+                        'synced_chunks' // Clean up evidence chunks
+                    ];
+
+                    let totalDeleted = 0;
+
+                    for (const col of collections) {
+                        if (statusBtn) statusBtn.innerText = `Wiping ${col}...`;
+                        console.log(`Starting wipe of collection: ${col}`);
+
+                        try {
+                            const snapshot = await db.collection(col).get();
+                            if (!snapshot.empty) {
+                                const batchSize = 50; // Firestore limit for batched writes is 500, but let's be safe with parallel deletes
+                                const docs = snapshot.docs;
+                                console.log(`Found ${docs.length} docs in ${col}`);
+
+                                // Delete in chunks to avoid overwhelming the network/browser
+                                for (let i = 0; i < docs.length; i += batchSize) {
+                                    const chunk = docs.slice(i, i + batchSize);
+                                    await Promise.all(chunk.map(doc => doc.ref.delete()));
+                                    totalDeleted += chunk.length;
+                                }
+                            }
+                        } catch (err) {
+                            console.error(`Failed to wipe collection ${col}:`, err);
+                            // Continue to next collection even if one fails
+                        }
+                    }
+
+                    console.log(`Cloud Wipe Complete. Deleted ${totalDeleted} documents.`);
+
+                    // 3. Clear Local Storage
+                    localStorage.clear();
+
+                    // 4. Clear IndexedDB (VideoDB) if possible - straightforward to just clear the DB
+                    try {
+                        const dbreq = indexedDB.deleteDatabase('VideoStorage');
+                        dbreq.onsuccess = () => console.log("VideoDB Deleted");
+                    } catch (e) { console.error("VideoDB Delete Failed", e); }
+
+                    alert(`Factory Reset Complete.\n\n- Cloud Data: Wiped (${totalDeleted} items)\n- Local Data: Cleared\n\nThe app will now reload.`);
+                    window.location.reload();
+
+                } catch (e) {
+                    console.error("Factory Reset Fatal Error", e);
+                    alert("Factory Reset Error: " + e.message + "\n\nLocal data will be cleared, but cloud data might remain.");
+                    localStorage.clear();
+                    window.location.reload();
+                }
             },
             getStudents: () => JSON.parse(localStorage.getItem(DB_KEYS.STUDENTS) || '[]'),
             getStudentsByBatch: (batchId) => window.Utils.getStudents().filter(s => s.batchId === batchId),
@@ -843,6 +898,7 @@
             EyeOff: () => <LucideIcon name="eye-off" className="w-5 h-5" />,
             Upload: () => <LucideIcon name="upload" className="w-5 h-5" />,
             Download: () => <LucideIcon name="download" className="w-5 h-5" />,
+            Database: ({ className }) => <LucideIcon name="database" className={className || "w-4 h-4"} />,
             FileText: () => <LucideIcon name="file-text" className="w-5 h-5" />,
             Book: () => <LucideIcon name="book" className="w-5 h-5" />,
             Cpu: () => <LucideIcon name="cpu" className="w-5 h-5" />,
@@ -868,7 +924,7 @@
             XCircle: () => <LucideIcon name="x-circle" className="w-5 h-5" />,
             UploadCloud: () => <LucideIcon name="upload-cloud" className="w-12 h-12" />,
             Save: () => <LucideIcon name="save" className="w-4 h-4" />,
-            TriangleAlert: () => <LucideIcon name="triangle-alert" className="w-6 h-6" />,
+            TriangleAlert: () => <LucideIcon name="alert-triangle" className="w-6 h-6" />, // Fallback to safe name 'alert-triangle'
             Loader: ({ className }) => <LucideIcon name="loader" className={className || "w-4 h-4"} />,
             Play: ({ className }) => <LucideIcon name="play" className={className || "w-4 h-4"} />,
             CheckCircle: ({ className }) => <LucideIcon name="check-circle" className={className || "w-5 h-5"} />,
@@ -5677,6 +5733,61 @@
                 <div className="animate-fade-in">
                     <h2 className="text-2xl font-bold mb-6 text-gray-800">Administrator Dashboard</h2>
 
+                    {/* System Management (Debugging Position) */}
+                    <div className="mb-8 bg-red-50 rounded-xl shadow-sm border border-red-200 p-6">
+                        <h3 className="text-lg font-bold text-red-800 mb-4 flex items-center gap-2">
+                            <Icons.TriangleAlert className="w-5 h-5 text-red-600" /> System Management
+                        </h3>
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <h4 className="font-bold text-gray-800">Factory Reset</h4>
+                                <p className="text-sm text-gray-600 max-w-xl">
+                                    This will permanently delete ALL data (Batches, Students, QPs, Responses) from both this device and the Cloud.
+                                    This action cannot be undone. Use with extreme caution.
+                                </p>
+                            </div>
+                            <button
+                                onClick={window.Utils.factoryReset}
+                                className="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-lg font-bold shadow-lg flex items-center gap-2 transition-transform hover:scale-105"
+                            >
+                                <Icons.Trash2 className="w-5 h-5" />
+                                Reset App & Clear Cloud
+                            </button>
+                        </div>
+
+                        {/* Cloud Verification Tool */}
+                        <div className="mt-4 pt-4 border-t border-red-200 flex justify-end">
+                            <button
+                                onClick={async () => {
+                                    const btn = document.getElementById('btn-check-cloud');
+                                    if (btn) btn.innerText = "Checking...";
+
+                                    const cols = ['ssc', 'qps', 'nos', 'pcs', 'batches', 'students', 'assessors', 'responses', 'question_papers', 'synced_chunks'];
+                                    let report = "Cloud Data Status:\n-------------------\n";
+                                    let total = 0;
+
+                                    for (const c of cols) {
+                                        try {
+                                            const snap = await db.collection(c).get();
+                                            const count = snap.size;
+                                            total += count;
+                                            report += `${c}: ${count}\n`;
+                                        } catch (e) {
+                                            report += `${c}: Error (${e.message})\n`;
+                                        }
+                                    }
+
+                                    if (btn) btn.innerText = "Check Cloud Data";
+                                    alert(report + `\nTotal Documents: ${total}`);
+                                }}
+                                id="btn-check-cloud"
+                                className="text-xs text-red-600 hover:text-red-800 underline font-medium flex items-center gap-1"
+                            >
+                                <Icons.Database className="w-3 h-3" /> Check Cloud Data
+                            </button>
+                        </div>
+                    </div>
+
                     {/* Stats Grid */}
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
                         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4">
@@ -5738,6 +5849,7 @@
                             </table>
                         </div>
                     </div>
+
                 </div>
             );
         };
