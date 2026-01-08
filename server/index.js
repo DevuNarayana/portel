@@ -269,12 +269,17 @@ createCRUDEndpoints('question_papers', 'question_papers');
 
 // Removed duplicate health check from bottom
 
+<<<<<<< HEAD
 // Serve Client Static Files
 app.use(express.static(path.join(__dirname, '../client')));
 
 // Catch-all to serve index.html for client-side routing
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '../client/index.html'));
+=======
+app.get('/', (req, res) => {
+    res.send('Exam System API & Signaling Server Running');
+>>>>>>> 3e9b31406a4921f4a1316207881c0006c0da4fe4
 });
 
 // Use httpServer.listen instead of app.listen
