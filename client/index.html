@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+ï»¿<!DOCTYPE html>
 <html lang="en">
 
 <head>
@@ -37,30 +37,30 @@
         }
 
         .glass {
-backdrop-filter: blur(10px);
-background: rgba(255, 255, 255, 0.9);
-}
+            backdrop-filter: blur(10px);
+            background: rgba(255, 255, 255, 0.9);
+        }
 
-/* Custom Scrollbar Global */
-::-webkit-scrollbar {
-width: 8px;
-height: 8px;
-}
+        /* Custom Scrollbar Global */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
 
-::-webkit-scrollbar-track {
-background: #f1f1f1;
-border-radius: 4px;
-}
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
 
-::-webkit-scrollbar-thumb {
-background: #c1c1c1;
-border-radius: 4px;
-}
+        ::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 4px;
+        }
 
-::-webkit-scrollbar-thumb:hover {
-background: #a8a8a8;
-}
-</style>
+        ::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
+    </style>
 </head>
 
 <body>
@@ -1372,7 +1372,7 @@ background: #a8a8a8;
                             }
                         });
 
-                        const summary = `Import Results:\n• Added: ${addedNOS} NOS, ${addedPCs} PCs\n• Skipped (Duplicates): ${skippedNOS} NOS, ${skippedPCs} PCs`;
+                        const summary = `Import Results:\nâ€¢ Added: ${addedNOS} NOS, ${addedPCs} PCs\nâ€¢ Skipped (Duplicates): ${skippedNOS} NOS, ${skippedPCs} PCs`;
 
                         if (errors.length > 0) {
                             alert(`${summary}\n\nWarnings/Errors:\n${errors.slice(0, 10).join('\n')}`);
@@ -2699,7 +2699,6 @@ background: #a8a8a8;
                 };
                 reader.readAsArrayBuffer(file);
             };
-<<<<<<< HEAD
             const handleAutoGenerate = () => {
                 if (!selectedSSC || !filterQPId) return alert("Please select a Sector and Qualification Pack first.");
 
@@ -2772,8 +2771,6 @@ background: #a8a8a8;
                 setQPList(window.Utils.getQuestionPapers());
                 alert(`Success! Generated ${generatedQuestions.length} questions with Total Marks: ${totalMarks}`);
             };
-=======
->>>>>>> 3e9b31406a4921f4a1316207881c0006c0da4fe4
 
             return (
                 <div className="animate-fade-in text-sm">
@@ -2813,7 +2810,6 @@ background: #a8a8a8;
 
                         </div>
                         {selectedSSC && filterQPId && (
-<<<<<<< HEAD
                             <div className="flex gap-2">
                                 <button onClick={handleAutoGenerate}
                                     className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-medium shadow-sm transition-colors flex items-center gap-2">
@@ -2824,12 +2820,6 @@ background: #a8a8a8;
                                     <Icons.Upload className="w-4 h-4" /> Upload Question Paper
                                 </button>
                             </div>
-=======
-                            <button onClick={() => setShowUploadModal(true)}
-                                className="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-lg font-medium shadow-sm transition-colors flex items-center gap-2">
-                                <Icons.Upload className="w-4 h-4" /> Upload Question Paper
-                            </button>
->>>>>>> 3e9b31406a4921f4a1316207881c0006c0da4fe4
                         )}
                     </div>
 
@@ -3162,7 +3152,7 @@ background: #a8a8a8;
                             {/* Recording Indicator */}
                             <div className="absolute top-6 left-6 bg-black/60 backdrop-blur-sm px-4 py-2 rounded-full text-sm font-bold flex items-center gap-2 border border-white/10 shadow-lg z-20">
                                 <div className={`w-2.5 h-2.5 rounded-full ${remoteStream ? 'bg-red-500 animate-pulse' : 'bg-yellow-500'} shadow-[0_0_8px_rgba(239,68,68,0.6)]`}></div>
-                                <span className="tracking-wide">REC • {remoteStream ? 'LIVE' : 'CONNECTING'}</span>
+                                <span className="tracking-wide">REC â€¢ {remoteStream ? 'LIVE' : 'CONNECTING'}</span>
                             </div>
 
                             {/* Controls */}
@@ -5822,9 +5812,6 @@ background: #a8a8a8;
                 <div className="animate-fade-in">
                     <h2 className="text-2xl font-bold mb-6 text-gray-800">Administrator Dashboard</h2>
 
-<<<<<<< HEAD
-
-=======
                     {/* System Management (Debugging Position) */}
                     <div className="mb-8 bg-red-50 rounded-xl shadow-sm border border-red-200 p-6">
                         <h3 className="text-lg font-bold text-red-800 mb-4 flex items-center gap-2">
@@ -5879,69 +5866,68 @@ background: #a8a8a8;
                             </button>
                         </div>
                     </div>
->>>>>>> 3e9b31406a4921f4a1316207881c0006c0da4fe4
 
-            {/* Stats Grid */ }
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4">
-                    <div className="p-3 bg-blue-50 text-blue-600 rounded-lg"><Icons.Users className="w-8 h-8" /></div>
-                    <div>
-                        <h3 className="text-2xl font-bold text-gray-800">{stats.batches}</h3>
-                        <p className="text-sm text-gray-500">Total Batches</p>
+                    {/* Stats Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4">
+                            <div className="p-3 bg-blue-50 text-blue-600 rounded-lg"><Icons.Users className="w-8 h-8" /></div>
+                            <div>
+                                <h3 className="text-2xl font-bold text-gray-800">{stats.batches}</h3>
+                                <p className="text-sm text-gray-500">Total Batches</p>
+                            </div>
+                        </div>
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4">
+                            <div className="p-3 bg-green-50 text-green-600 rounded-lg"><Icons.User className="w-8 h-8" /></div>
+                            <div>
+                                <h3 className="text-2xl font-bold text-gray-800">{stats.students}</h3>
+                                <p className="text-sm text-gray-500">Total Candidates</p>
+                            </div>
+                        </div>
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4">
+                            <div className="p-3 bg-purple-50 text-purple-600 rounded-lg"><Icons.FileText className="w-8 h-8" /></div>
+                            <div>
+                                <h3 className="text-2xl font-bold text-gray-800">{stats.qps}</h3>
+                                <p className="text-sm text-gray-500">Question Papers</p>
+                            </div>
+                        </div>
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4">
+                            <div className="p-3 bg-orange-50 text-orange-600 rounded-lg"><Icons.Eye className="w-8 h-8" /></div>
+                            <div>
+                                <h3 className="text-2xl font-bold text-gray-800">{stats.assessors}</h3>
+                                <p className="text-sm text-gray-500">Active Assessors</p>
+                            </div>
+                        </div>
                     </div>
-                </div>
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4">
-                    <div className="p-3 bg-green-50 text-green-600 rounded-lg"><Icons.User className="w-8 h-8" /></div>
-                    <div>
-                        <h3 className="text-2xl font-bold text-gray-800">{stats.students}</h3>
-                        <p className="text-sm text-gray-500">Total Candidates</p>
-                    </div>
-                </div>
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4">
-                    <div className="p-3 bg-purple-50 text-purple-600 rounded-lg"><Icons.FileText className="w-8 h-8" /></div>
-                    <div>
-                        <h3 className="text-2xl font-bold text-gray-800">{stats.qps}</h3>
-                        <p className="text-sm text-gray-500">Question Papers</p>
-                    </div>
-                </div>
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4">
-                    <div className="p-3 bg-orange-50 text-orange-600 rounded-lg"><Icons.Eye className="w-8 h-8" /></div>
-                    <div>
-                        <h3 className="text-2xl font-bold text-gray-800">{stats.assessors}</h3>
-                        <p className="text-sm text-gray-500">Active Assessors</p>
-                    </div>
-                </div>
-            </div>
 
-            {/* Recent Activity */ }
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-                <h3 className="text-lg font-bold text-gray-700 mb-4">Recent Batches</h3>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left">
-                        <thead className="bg-gray-50 text-xs uppercase text-gray-500">
-                            <tr>
-                                <th className="p-3 rounded-l-lg">Batch Name</th>
-                                <th className="p-3">Training Centre</th>
-                                <th className="p-3">Start Date</th>
-                                <th className="p-3">Status</th>
-                                <th className="p-3 rounded-r-lg text-right">Candidates</th>
-                            </tr>
-                        </thead>
-                        <tbody className="text-sm">
-                            {recentBatches.map(b => (
-                                <tr key={b.id} className="border-b last:border-0 hover:bg-gray-50">
-                                    <td className="p-3 font-medium text-gray-800">{b.name}</td>
-                                    <td className="p-3 text-gray-600">{b.trainingCentre || '-'}</td>
-                                    <td className="p-3 text-gray-600">{b.startDate}</td>
-                                    <td className="p-3"><span className="bg-green-100 text-green-700 px-2 py-1 rounded-full text-xs font-bold">Active</span></td>
-                                    <td className="p-3 text-right font-bold text-indigo-600">{window.Utils.getStudentsByBatch(b.id).length}</td>
-                                </tr>
-                            ))}
-                            {recentBatches.length === 0 && <tr><td colSpan="5" className="p-4 text-center text-gray-400">No recent activity</td></tr>}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+                    {/* Recent Activity */}
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                        <h3 className="text-lg font-bold text-gray-700 mb-4">Recent Batches</h3>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left">
+                                <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+                                    <tr>
+                                        <th className="p-3 rounded-l-lg">Batch Name</th>
+                                        <th className="p-3">Training Centre</th>
+                                        <th className="p-3">Start Date</th>
+                                        <th className="p-3">Status</th>
+                                        <th className="p-3 rounded-r-lg text-right">Candidates</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="text-sm">
+                                    {recentBatches.map(b => (
+                                        <tr key={b.id} className="border-b last:border-0 hover:bg-gray-50">
+                                            <td className="p-3 font-medium text-gray-800">{b.name}</td>
+                                            <td className="p-3 text-gray-600">{b.trainingCentre || '-'}</td>
+                                            <td className="p-3 text-gray-600">{b.startDate}</td>
+                                            <td className="p-3"><span className="bg-green-100 text-green-700 px-2 py-1 rounded-full text-xs font-bold">Active</span></td>
+                                            <td className="p-3 text-right font-bold text-indigo-600">{window.Utils.getStudentsByBatch(b.id).length}</td>
+                                        </tr>
+                                    ))}
+                                    {recentBatches.length === 0 && <tr><td colSpan="5" className="p-4 text-center text-gray-400">No recent activity</td></tr>}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
 
                 </div >
             );
@@ -7295,10 +7281,10 @@ background: #a8a8a8;
                     </main>
                 </div>
 const container = document.getElementById('root');
-const root = ReactDOM.createRoot(container);
-root.render(
-<App />);
-</script>
+            const root = ReactDOM.createRoot(container);
+            root.render(
+                <App />);
+    </script>
 </body>
 
 </html>
