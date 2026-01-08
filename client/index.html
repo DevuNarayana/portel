@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 
 <head>
@@ -11,44 +11,56 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-    transform: translateY(10px);
-    }
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
 
-    to {
-    opacity: 1;
-    transform: translateY(0);
-    }
-    }
+    <style>
+        @keyframes fade-in {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
 
-    .animate-fade-in {
-    animation: fade-in 0.3s ease-out;
-    }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
 
-    .glass {
-    backdrop-filter: blur(10px);
-    background: rgba(255, 255, 255, 0.9);
-    }
+        .animate-fade-in {
+            animation: fade-in 0.3s ease-out;
+        }
 
-    /* Custom Scrollbar Global */
-    ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-    }
+        .glass {
+backdrop-filter: blur(10px);
+background: rgba(255, 255, 255, 0.9);
+}
 
-    ::-webkit-scrollbar-track {
-    background: #f1f1f1;
-    border-radius: 4px;
-    }
+/* Custom Scrollbar Global */
+::-webkit-scrollbar {
+width: 8px;
+height: 8px;
+}
 
-    ::-webkit-scrollbar-thumb {
-    background: #c1c1c1;
-    border-radius: 4px;
-    }
+::-webkit-scrollbar-track {
+background: #f1f1f1;
+border-radius: 4px;
+}
 
-    ::-webkit-scrollbar-thumb:hover {
-    background: #a8a8a8;
-    }
-    </style>
+::-webkit-scrollbar-thumb {
+background: #c1c1c1;
+border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+background: #a8a8a8;
+}
+</style>
 </head>
 
 <body>
@@ -631,7 +643,7 @@
                 // localStorage.setItem(DB_KEYS.BATCHES, '[]');
             },
             factoryReset: async () => {
-                if (!confirm("⚠️ FACTORY RESET WARNING ⚠️\n\nThis will PERMANENTLY DELETE ALL DATA from both your device AND the Cloud.\n\nThis includes data from ALL connected devices.\n\nAre you sure you want to proceed?")) return;
+                if (!confirm("?? FACTORY RESET WARNING ??\n\nThis will PERMANENTLY DELETE ALL DATA from both your device AND the Cloud.\n\nThis includes data from ALL connected devices.\n\nAre you sure you want to proceed?")) return;
 
                 const statusBtn = document.getElementById('sync-status-text');
                 const originalText = statusBtn ? statusBtn.innerText : '';
@@ -1360,7 +1372,7 @@
                             }
                         });
 
-                        const summary = `Import Results:\n• Added: ${addedNOS} NOS, ${addedPCs} PCs\n• Skipped (Duplicates): ${skippedNOS} NOS, ${skippedPCs} PCs`;
+                        const summary = `Import Results:\n� Added: ${addedNOS} NOS, ${addedPCs} PCs\n� Skipped (Duplicates): ${skippedNOS} NOS, ${skippedPCs} PCs`;
 
                         if (errors.length > 0) {
                             alert(`${summary}\n\nWarnings/Errors:\n${errors.slice(0, 10).join('\n')}`);
@@ -1929,7 +1941,7 @@
             if (viewMode === 'upload') {
                 return (
                     <div className="p-6 animate-fade-in">
-                        <button onClick={() => setViewMode('list')} className="mb-4 text-indigo-600 font-bold flex items-center gap-2">← Back to List</button>
+                        <button onClick={() => setViewMode('list')} className="mb-4 text-indigo-600 font-bold flex items-center gap-2">? Back to List</button>
                         <h2 className="text-xl font-bold mb-4">Upload NOS & PC</h2>
                         <div className="bg-white p-6 rounded shadow border border-dashed border-gray-300 text-center">
                             <p className="text-gray-500">Excel Upload feature coming soon.</p>
@@ -2254,7 +2266,7 @@
                                 <h2 className="text-xl font-bold text-gray-800">Sector Skill Council : {getSSCName(selectedQP.sscId)}</h2>
                                 <div className="text-right">
                                     <h2 className="text-xl font-bold text-gray-800">Qualification Pack : {selectedQP.name}</h2>
-                                    <button onClick={onBack} className="mt-2 text-indigo-600 hover:text-indigo-800 text-sm font-medium">← Back to QPs</button>
+                                    <button onClick={onBack} className="mt-2 text-indigo-600 hover:text-indigo-800 text-sm font-medium">? Back to QPs</button>
                                 </div>
                             </div>
 
@@ -3150,7 +3162,7 @@
                             {/* Recording Indicator */}
                             <div className="absolute top-6 left-6 bg-black/60 backdrop-blur-sm px-4 py-2 rounded-full text-sm font-bold flex items-center gap-2 border border-white/10 shadow-lg z-20">
                                 <div className={`w-2.5 h-2.5 rounded-full ${remoteStream ? 'bg-red-500 animate-pulse' : 'bg-yellow-500'} shadow-[0_0_8px_rgba(239,68,68,0.6)]`}></div>
-                                <span className="tracking-wide">REC • {remoteStream ? 'LIVE' : 'CONNECTING'}</span>
+                                <span className="tracking-wide">REC � {remoteStream ? 'LIVE' : 'CONNECTING'}</span>
                             </div>
 
                             {/* Controls */}
