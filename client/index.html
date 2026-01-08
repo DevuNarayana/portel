@@ -1,4 +1,4 @@
-ï»¿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 
 <head>
@@ -1372,7 +1372,7 @@
                             }
                         });
 
-                        const summary = `Import Results:\nâ€¢ Added: ${addedNOS} NOS, ${addedPCs} PCs\nâ€¢ Skipped (Duplicates): ${skippedNOS} NOS, ${skippedPCs} PCs`;
+                        const summary = `Import Results:\n• Added: ${addedNOS} NOS, ${addedPCs} PCs\n• Skipped (Duplicates): ${skippedNOS} NOS, ${skippedPCs} PCs`;
 
                         if (errors.length > 0) {
                             alert(`${summary}\n\nWarnings/Errors:\n${errors.slice(0, 10).join('\n')}`);
@@ -3160,7 +3160,7 @@
                             {/* Recording Indicator */}
                             <div className="absolute top-6 left-6 bg-black/60 backdrop-blur-sm px-4 py-2 rounded-full text-sm font-bold flex items-center gap-2 border border-white/10 shadow-lg z-20">
                                 <div className={`w-2.5 h-2.5 rounded-full ${remoteStream ? 'bg-red-500 animate-pulse' : 'bg-yellow-500'} shadow-[0_0_8px_rgba(239,68,68,0.6)]`}></div>
-                                <span className="tracking-wide">REC â€¢ {remoteStream ? 'LIVE' : 'CONNECTING'}</span>
+                                <span className="tracking-wide">REC • {remoteStream ? 'LIVE' : 'CONNECTING'}</span>
                             </div>
 
                             {/* Controls */}
@@ -7244,12 +7244,10 @@
             };
 
             if (!user) {
-                return
-                <Login onLogin={handleLogin} />;
+                return <Login onLogin={handleLogin} />;
             }
 
-            return
-            <Dashboard user={user} onLogout={handleLogout} />;
+            return <Dashboard user={user} onLogout={handleLogout} />;
         };
 
         const container = document.getElementById('root');
