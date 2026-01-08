@@ -157,6 +157,14 @@
         window.Utils = {
             generateId: () => 'id_' + Math.random().toString(36).substr(2, 9) + Date.now(),
 
+            downloadSampleFormat: () => {
+                const headers = [["BatchName", "Enrollment No", "Name of Training Agency", "Name of the Trainee", "Gender(M/F/T)"]];
+                const ws = window.XLSX.utils.aoa_to_sheet(headers);
+                const wb = window.XLSX.utils.book_new();
+                window.XLSX.utils.book_append_sheet(wb, ws, "Students");
+                window.XLSX.writeFile(wb, "Student_Import_Format.xlsx");
+            },
+
             // HELPER: Delete from Cloud
             // HELPER: Delete from Cloud
             deleteFromCloud: async (route, id) => {
@@ -4057,7 +4065,7 @@
                                                 <span className="font-bold">Note :</span> It will accept only Excel files with *.xls extension only.
                                             </p>
                                             <p className="text-gray-700">
-                                                Use the same format as given below : <span onClick={downloadSampleFormat} className="text-green-600 hover:underline cursor-pointer">Download</span>
+                                                Use the same format as given below : <span onClick={() => window.Utils.downloadSampleFormat()} className="text-green-600 hover:underline cursor-pointer">Download</span>
                                             </p>
 
                                             {/* Format Table */}
