@@ -24,28 +24,19 @@ const LiveVivaConsole = ({ batch, student, onClose }) => {
 
     useEffect(() => {
         // 1. Initialize Socket
-<<<<<<< HEAD
         // 1. Initialize Socket
-        const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-        const SERVER_URL = isLocal ? window.location.origin : 'https://portel-backend.onrender.com';
+        // Support localhost, 127.0.0.1, and local network IPs (e.g. 10.x.x.x, 192.168.x.x)
+        const isProduction = window.location.hostname === 'exam-portal-2004.web.app';
+        const SERVER_URL = isProduction ? 'https://portel-backend.onrender.com' : `http://${window.location.hostname}:5000`;
         console.log("Connecting to Socket Server:", SERVER_URL);
 
         socketRef.current = io(SERVER_URL);
-=======
-        // socketRef.current = io(SERVER_URL);
-        console.warn("Socket.io (LiveVivaComponent) is disabled. Signaling needs to be migrated to Firestore.");
->>>>>>> 3e9b31406a4921f4a1316207881c0006c0da4fe4
         const socket = socketRef.current;
         // Unique Room for 1-on-1: BatchID_StudentID
         const roomId = `${batch.id}_${student.id}`;
 
-<<<<<<< HEAD
         setConnectionStatus(`Joining Room: ${roomId}...`);
         if (socket) socket.emit('join-room', roomId, 'assessor');
-=======
-        // setConnectionStatus(`Joining Room: ${roomId}...`);
-        // if (socket) socket.emit('join-room', roomId, 'assessor');
->>>>>>> 3e9b31406a4921f4a1316207881c0006c0da4fe4
 
         // 2. Initialize PeerConnection
         peerRef.current = new RTCPeerConnection({

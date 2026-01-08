@@ -2568,6 +2568,14 @@
 
             }, [selectedSSC, filterQPId, allQPs]);
 
+            const downloadSampleFormat = () => {
+                const headers = [["BatchName", "Enrollment No", "Name of Training Agency", "Name of the Trainee", "Gender(M/F/T)"]];
+                const ws = window.XLSX.utils.aoa_to_sheet(headers);
+                const wb = window.XLSX.utils.book_new();
+                window.XLSX.utils.book_append_sheet(wb, ws, "Students");
+                window.XLSX.writeFile(wb, "Student_Import_Format.xlsx");
+            };
+
             const handleDownloadSample = () => {
                 const headers = [['Question', 'Option1', 'Option2', 'Option3', 'Option4', 'CorrectOption', 'NoofOptions', 'QuestionTypeID', 'PCIDsWithMarks']];
                 let data = [];
