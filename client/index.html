@@ -2158,6 +2158,8 @@
             const [showPCModal, setShowPCModal] = useState(false);
             const [selectedNOS, setSelectedNOS] = useState(null);
             const [expandedNOS, setExpandedNOS] = useState([]);
+            const [showUploadNOSModal, setShowUploadNOSModal] = useState(false);
+            const [showUploadPCModal, setShowUploadPCModal] = useState(false);
 
             const [newNOS, setNewNOS] = useState({
                 name: '', code: '', qpId: selectedQP?.id || '',
@@ -2267,6 +2269,112 @@
 
             const getQPName = (id) => qpList.find(q => q.id === id)?.name || id;
             const getSSCName = (id) => sscList.find(s => s.id === id)?.name || id;
+
+            const handleUploadNOS = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    const bstr = evt.target.result;
+                    const wb = window.XLSX.read(bstr, { type: 'binary' });
+                    const wsname = wb.SheetNames[0];
+                    const ws = wb.Sheets[wsname];
+                    const data = window.XLSX.utils.sheet_to_json(ws);
+
+                    console.log("Uploaded NOS Data:", data);
+
+                    let count = 0;
+                    data.forEach(row => {
+                        if (row['NOS ID'] && row['NOS Name']) {
+                            const nos = {
+                                id: window.Utils.generateId(),
+                                qpId: selectedQP.id,
+                                code: row['NOS ID'],
+                                name: row['NOS Name'],
+                                theoryCutoff: row['Theory Cutoff'] || '',
+                                practicalCutoff: row['Practical Cutoff'] || '',
+                                vivaCutoff: row['Viva Cutoff'] || '',
+                                overallCutoff: row['Overall Cutoff'] || '',
+                                createdAt: new Date().toISOString()
+                            };
+                            window.Utils.saveNOS(nos);
+                            count++;
+                        }
+                    });
+
+                    window.Utils.uploadToCloud(true);
+                    setNOSList(window.Utils.getNOS());
+                    setShowUploadNOSModal(false);
+                    alert(`Successfully uploaded ${count} NOS records.`);
+                };
+                reader.readAsBinaryString(file);
+            };
+
+            const handleUploadPC = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    const bstr = evt.target.result;
+                    const wb = window.XLSX.read(bstr, { type: 'binary' });
+                    const wsname = wb.SheetNames[0];
+                    const ws = wb.Sheets[wsname];
+                    const data = window.XLSX.utils.sheet_to_json(ws);
+
+                    console.log("Uploaded PC Data:", data);
+
+                    let count = 0;
+                    const allNOS = window.Utils.getNOS();
+
+                    data.forEach(row => {
+                        if (row['NOS ID'] && row['PC ID'] && row['PC Name']) {
+                            const parentNOS = allNOS.find(n => n.code === row['NOS ID'] && n.qpId === selectedQP.id);
+
+                            if (parentNOS) {
+                                const pc = {
+                                    id: window.Utils.generateId(),
+                                    nosId: parentNOS.id,
+                                    code: row['PC ID'],
+                                    name: row['PC Name'],
+                                    theoryMarks: parseFloat(row['Theory Marks']) || 0,
+                                    practicalMarks: parseFloat(row['Practical Marks']) || 0,
+                                    vivaMarks: parseFloat(row['Viva Marks']) || 0,
+                                    totalMarks: (parseFloat(row['Theory Marks']) || 0) + (parseFloat(row['Practical Marks']) || 0) + (parseFloat(row['Viva Marks']) || 0),
+                                    createdAt: new Date().toISOString()
+                                };
+                                window.Utils.savePC(pc);
+                                count++;
+                            }
+                        }
+                    });
+
+                    window.Utils.uploadToCloud(true);
+                    setPCList(window.Utils.getPCs());
+                    setShowUploadPCModal(false);
+                    alert(`Successfully uploaded ${count} PC records.`);
+                };
+                reader.readAsBinaryString(file);
+            };
+
+            const downloadNOSSample = () => {
+                const headers = [['NOS ID', 'NOS Name', 'Theory Cutoff', 'Practical Cutoff', 'Viva Cutoff', 'Overall Cutoff']];
+                const data = [['NOS101', 'Introduction to IT', '40', '40', '40', '50']];
+                const ws = window.XLSX.utils.aoa_to_sheet([...headers, ...data]);
+                const wb = window.XLSX.utils.book_new();
+                window.XLSX.utils.book_append_sheet(wb, ws, "NOS_Sample");
+                window.XLSX.writeFile(wb, "NOS_Upload_Sample.xlsx");
+            };
+
+            const downloadPCSample = () => {
+                const headers = [['NOS ID', 'PC ID', 'PC Name', 'Theory Marks', 'Practical Marks', 'Viva Marks']];
+                const data = [['NOS101', 'PC1', 'Understand Basic Concepts', '10', '20', '5']];
+                const ws = window.XLSX.utils.aoa_to_sheet([...headers, ...data]);
+                const wb = window.XLSX.utils.book_new();
+                window.XLSX.utils.book_append_sheet(wb, ws, "PC_Sample");
+                window.XLSX.writeFile(wb, "PC_Upload_Sample.xlsx");
+            };
 
             const filteredNOS = selectedQP ? nosList.filter(n => n.qpId === selectedQP.id) : nosList;
 
@@ -2446,10 +2554,62 @@
                     )}
 
                     {selectedQP && (
-                        <div className="mt-4 flex justify-end">
+                        <div className="mt-4 flex justify-end gap-2">
+                            <button onClick={() => setShowUploadNOSModal(true)} className="bg-green-600 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-green-700">
+                                <Icons.UploadCloud className="w-4 h-4" /> Upload NOS
+                            </button>
+                            <button onClick={() => setShowUploadPCModal(true)} className="bg-blue-600 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-blue-700">
+                                <Icons.UploadCloud className="w-4 h-4" /> Upload PC
+                            </button>
                             <button onClick={() => setShowNOSModal(true)} className="bg-red-500 text-white px-4 py-2 rounded flex items-center gap-2 hover:bg-red-600">
                                 <Icons.Plus /> Add NOS
                             </button>
+                        </div>
+                    )}
+
+                    {/* Upload NOS Modal */}
+                    {showUploadNOSModal && (
+                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+                            <div className="bg-white rounded-xl p-8 w-full max-w-lg">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="text-xl font-bold">Upload NOS (Excel)</h3>
+                                    <button onClick={() => setShowUploadNOSModal(false)}><Icons.XCircle className="text-gray-400 hover:text-red-500" /></button>
+                                </div>
+                                <div className="space-y-4">
+                                    <p className="text-sm text-gray-600">Please upload an Excel file with columns: <br /><b>NOS ID, NOS Name, Theory Cutoff, Practical Cutoff, Viva Cutoff, Overall Cutoff</b></p>
+                                    <button onClick={downloadNOSSample} className="text-green-600 text-sm hover:underline flex items-center gap-1"><Icons.Download className="w-3 h-3" /> Download Sample Format</button>
+                                    <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer relative">
+                                        <input type="file" accept=".xlsx, .xls" onChange={handleUploadNOS} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                                        <div className="pointer-events-none">
+                                            <Icons.UploadCloud className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                                            <p className="font-medium text-gray-600">Click to Upload NOS Excel</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Upload PC Modal */}
+                    {showUploadPCModal && (
+                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+                            <div className="bg-white rounded-xl p-8 w-full max-w-lg">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="text-xl font-bold">Upload PC (Excel)</h3>
+                                    <button onClick={() => setShowUploadPCModal(false)}><Icons.XCircle className="text-gray-400 hover:text-red-500" /></button>
+                                </div>
+                                <div className="space-y-4">
+                                    <p className="text-sm text-gray-600">Please upload an Excel file with columns: <br /><b>NOS ID, PC ID, PC Name, Theory Marks, Practical Marks, Viva Marks</b></p>
+                                    <button onClick={downloadPCSample} className="text-green-600 text-sm hover:underline flex items-center gap-1"><Icons.Download className="w-3 h-3" /> Download Sample Format</button>
+                                    <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer relative">
+                                        <input type="file" accept=".xlsx, .xls" onChange={handleUploadPC} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                                        <div className="pointer-events-none">
+                                            <Icons.UploadCloud className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                                            <p className="font-medium text-gray-600">Click to Upload PC Excel</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     )}
 
