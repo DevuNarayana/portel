@@ -5493,50 +5493,66 @@
 
             const toggleRecording = () => {
                 if (isRecording) {
+                    // STOP MANUAL
                     if (mediaRecorderRef.current) mediaRecorderRef.current.stop();
                     setIsRecording(false);
+                    if (window.recordingInterval) clearInterval(window.recordingInterval);
                 } else {
+                    // START
                     if (!mediaStreamRef.current) return;
-                    chunksRef.current = [];
-                    const recorder = new MediaRecorder(mediaStreamRef.current);
-                    recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
-                    recorder.onstop = async () => {
-                        const blob = new Blob(chunksRef.current, { type: 'video/webm' });
-                        const key = `vid_${student.id}_${Date.now()}`;
-                        try {
-                            await VideoDB.saveVideo(key, blob);
-                            const newEvidence = { 
-                                img: null, 
-                                key: key, 
-                                time: new Date().toISOString(), 
-                                type: 'VIDEO_INDEXED_DB',
-                                storage: 'indexeddb'
-                            };
-                            const partialResponse = {
-                                studentId: student.id,
-                                batchId: batch.id,
-                                examType: examType,
-                                evidence: [newEvidence],
-                                status: 'draft'
-                            };
-                            window.Utils.saveResponse(partialResponse);
-                            setEvidence(prev => [...prev, newEvidence]);
-                            
-                            // AUTO SYNC
-                            const statusBtn = document.getElementById('sync-status-text');
-                            if(statusBtn) statusBtn.innerText = "Uploading Video...";
-                            window.Utils.uploadToCloud(true).then(() => {
-                                if(statusBtn) statusBtn.innerText = "Synced";
-                            });
-                            
-                        } catch (err) {
-                            console.error("Failed to save video to DB", err);
-                            alert("Video save failed: " + err.message);
-                        }
+
+                    const startSegment = () => {
+                        let localChunks = [];
+                        const recorder = new MediaRecorder(mediaStreamRef.current);
+                        recorder.ondataavailable = e => { if (e.data.size > 0) localChunks.push(e.data); };
+                        recorder.onstop = async () => {
+                            const blob = new Blob(localChunks, { type: 'video/webm' });
+                            const key = `vid_${student.id}_${Date.now()}`;
+                            try {
+                                await VideoDB.saveVideo(key, blob);
+                                const newEvidence = { 
+                                    img: null, 
+                                    key: key, 
+                                    time: new Date().toISOString(), 
+                                    type: 'VIDEO_INDEXED_DB',
+                                    storage: 'indexeddb'
+                                };
+                                const partialResponse = {
+                                    studentId: student.id,
+                                    batchId: batch.id,
+                                    examType: examType,
+                                    evidence: [newEvidence],
+                                    status: 'draft'
+                                };
+                                window.Utils.saveResponse(partialResponse);
+                                setEvidence(prev => [...prev, newEvidence]);
+                                
+                                // AUTO SYNC
+                                const statusBtn = document.getElementById('sync-status-text');
+                                if(statusBtn) statusBtn.innerText = "Uploading Video Segment...";
+                                window.Utils.uploadToCloud(true).then(() => {
+                                    if(statusBtn) statusBtn.innerText = "Synced";
+                                });
+                                
+                            } catch (err) {
+                                console.error("Failed to save video to DB", err);
+                            }
+                        };
+                        recorder.start();
+                        mediaRecorderRef.current = recorder;
                     };
-                    recorder.start();
+
+                    startSegment();
                     setIsRecording(true);
-                    mediaRecorderRef.current = recorder;
+
+                    // Auto-split every 10 minutes (600,000 ms)
+                    window.recordingInterval = setInterval(() => {
+                        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+                            console.log("Auto-splitting video segment...");
+                            mediaRecorderRef.current.stop(); 
+                            setTimeout(startSegment, 200); 
+                        }
+                    }, 600000);
                 }
             };
 
