@@ -6628,6 +6628,35 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
 
         // STUDENT PORTAL
         const StudentPortal = ({ user }) => {
+            const [streamActive, setStreamActive] = useState(false);
+
+            const startCameraManual = async () => {
+                try {
+                    console.log("Requesting Camera...");
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                    const video = document.getElementById('student-cam');
+                    if (video) {
+                        video.srcObject = stream;
+                        video.play().catch(e => console.error("Play Error", e));
+                        setStreamActive(true);
+                        setWebcamActive(true);
+                        console.log("Camera Started Successfully");
+                    } else {
+                        alert("Error: Video element not found. Please refresh.");
+                    }
+                } catch (err) {
+                    console.error("Camera Error", err);
+                    alert("Camera Failed: " + err.message + "\nPlease check permissions and try again.");
+                }
+            };
+
+            useEffect(() => {
+                if (examMode && !streamActive) {
+                    // Try auto-start after small delay to ensure DOM is ready
+                    setTimeout(startCameraManual, 1000);
+                }
+            }, [examMode]);
+
             useEffect(() => {
                 if (!window.VideoDB) alert("CRITICAL: Video Storage System Missing!");
                 else window.VideoDB.init().catch(e => alert("CRITICAL: Video Storage Init Failed: " + e.message));
@@ -7310,7 +7339,16 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
                         </div>
                         <div className="w-1/4 bg-gray-100 p-4 border-l">
                             <div className="relative">
-                                <video id="student-cam" autoPlay muted playsInline className="w-full bg-black rounded mb-2 transform scale-x-[-1]"></video>
+                                <div className="relative bg-black rounded mb-2 h-48 flex items-center justify-center overflow-hidden">
+                                <video id="student-cam" autoPlay muted playsInline className={`w-full h-full object-cover transform scale-x-[-1] ${streamActive ? 'block' : 'hidden'}`}></video>
+                                {!streamActive && (
+                                    <div className="absolute inset-0 flex flex-col items-center justify-center z-20">
+                                        <p className="text-white text-xs mb-2">Camera Off</p>
+                                        <button onClick={startCameraManual} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-full font-bold shadow text-sm">
+                                            Start Camera
+                                        </button>
+                                    </div>
+                                )}
                                 {isRecording && (
                                     <div className="absolute top-2 right-2 flex items-center gap-1 bg-red-600/90 text-white text-[10px] px-2 py-1 rounded-full animate-pulse shadow-lg z-10">
                                         <div className="w-2 h-2 bg-white rounded-full"></div> REC
