@@ -2285,15 +2285,15 @@
 
                     // Group data by NOS
                     const nosMap = new Map();
-                    
+
                     data.forEach(row => {
                         const nosId = row['NOSID'] || row['NOS ID'];
                         const nosName = row['NOS Name'];
                         const pcNo = row['PC No'] || row['PC ID'];
                         const pcName = row['PC Name'];
-                        
+
                         if (!nosId) return;
-                        
+
                         // Create or get NOS entry
                         if (!nosMap.has(nosId)) {
                             nosMap.set(nosId, {
@@ -2309,7 +2309,7 @@
                                 pcs: []
                             });
                         }
-                        
+
                         // Add PC if present
                         if (pcNo && pcName) {
                             const nos = nosMap.get(nosId);
@@ -2330,12 +2330,12 @@
                     // Save all NOS and PCs
                     let nosCount = 0;
                     let pcCount = 0;
-                    
+
                     nosMap.forEach(nos => {
                         const { pcs, ...nosData } = nos;
                         window.Utils.saveNOS(nosData);
                         nosCount++;
-                        
+
                         pcs.forEach(pc => {
                             window.Utils.savePC(pc);
                             pcCount++;
@@ -2351,7 +2351,7 @@
                 reader.readAsBinaryString(file);
             };
 
-            };
+
 
             const handleUploadPC = (e) => {
                 const file = e.target.files[0];
