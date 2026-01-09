@@ -5626,6 +5626,24 @@
                         <button onClick={onBack} className="text-indigo-600 font-medium flex items-center gap-1"><Icons.ChevronDown className="rotate-90" /> Back</button>
                         <h3 className="text-xl font-bold">{captureOnly ? 'Capture Evidence: ' : 'Evidence: '}{student.name}</h3>
                         <div className="flex gap-2">
+                            {captureOnly && (
+                                <button onClick={async (e) => {
+                                    const originalText = e.currentTarget.innerHTML;
+                                    e.currentTarget.innerText = 'Syncing...';
+                                    e.currentTarget.disabled = true;
+                                    try {
+                                        await window.Utils.uploadToCloud();
+                                        alert('Sync Complete!');
+                                    } catch(err) {
+                                        alert('Sync Failed: ' + err.message);
+                                    } finally {
+                                        e.currentTarget.innerHTML = originalText;
+                                        e.currentTarget.disabled = false;
+                                    }
+                                }} className="bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700 flex items-center gap-2 font-bold transition-transform hover:scale-105">
+                                    <Icons.UploadCloud className="w-4 h-4" /> Sync Evidence
+                                </button>
+                            )}
                             <button onClick={() => setShowGallery(!showGallery)} className="bg-gray-200 text-gray-700 px-4 py-2 rounded shadow hover:bg-gray-300 flex items-center gap-2 font-bold">
                                 {showGallery ? <Icons.EyeOff className="w-4 h-4" /> : <Icons.Eye className="w-4 h-4" />} {showGallery ? 'Hide Gallery' : 'View Gallery'}
                             </button>
