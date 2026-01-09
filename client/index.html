@@ -5970,7 +5970,6 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
 
             useEffect(() => {
                 const loadEvents = () => {
-                    const loadEvents = () => {
                         const batches = window.Utils.getBatches();
                         // Map batches to events
                         const evts = [];
@@ -6000,7 +5999,6 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
                         });
                         setEvents(evts);
                     };
-                };
                 loadEvents();
                 window.addEventListener('cloud-sync-complete', loadEvents);
                 return () => window.removeEventListener('cloud-sync-complete', loadEvents);
