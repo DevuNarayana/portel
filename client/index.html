@@ -2401,22 +2401,17 @@
             };
 
             const downloadNOSSample = () => {
-                const headers = [['NOS ID', 'NOS Name', 'Theory Cutoff', 'Practical Cutoff', 'Viva Cutoff', 'Overall Cutoff']];
-                const data = [['NOS101', 'Introduction to IT', '40', '40', '40', '50']];
+                const headers = [['QualificationPackID', 'NOSID', 'NOS Name', 'PC No', 'PC Name', 'Theory Marks', 'Practical Marks', 'Viva Marks', 'Total Marks']];
+                const data = [
+                    ['QP001', 'NOS101', 'Introduction to IT', 'PC1', 'Understand Basic Concepts', '10', '20', '5', '35'],
+                    ['QP001', 'NOS101', 'Introduction to IT', 'PC2', 'Demonstrate Skills', '15', '25', '10', '50']
+                ];
                 const ws = window.XLSX.utils.aoa_to_sheet([...headers, ...data]);
                 const wb = window.XLSX.utils.book_new();
-                window.XLSX.utils.book_append_sheet(wb, ws, "NOS_Sample");
-                window.XLSX.writeFile(wb, "NOS_Upload_Sample.xlsx");
+                window.XLSX.utils.book_append_sheet(wb, ws, "NOS_PC_Sample");
+                window.XLSX.writeFile(wb, "NOS_PC_Upload_Sample.xlsx");
             };
 
-            const downloadPCSample = () => {
-                const headers = [['NOS ID', 'PC ID', 'PC Name', 'Theory Marks', 'Practical Marks', 'Viva Marks']];
-                const data = [['NOS101', 'PC1', 'Understand Basic Concepts', '10', '20', '5']];
-                const ws = window.XLSX.utils.aoa_to_sheet([...headers, ...data]);
-                const wb = window.XLSX.utils.book_new();
-                window.XLSX.utils.book_append_sheet(wb, ws, "PC_Sample");
-                window.XLSX.writeFile(wb, "PC_Upload_Sample.xlsx");
-            };
 
             const filteredNOS = selectedQP ? nosList.filter(n => n.qpId === selectedQP.id) : nosList;
 
