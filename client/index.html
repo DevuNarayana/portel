@@ -6878,6 +6878,17 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
                     if (window.studentRecordingInterval) clearInterval(window.studentRecordingInterval);
                 };
             }, [examMode, isLocked, webcamActive, user.id]);
+            // Ensure Camera Stream is Attached to Video Element
+            useEffect(() => {
+                if (webcamActive && examMode && examMode !== 'VivaLive') {
+                    const video = document.getElementById('student-cam');
+                    if (video && !video.srcObject) {
+                        navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+                            video.srcObject = stream;
+                        }).catch(e => console.error("Camera Error", e));
+                    }
+                }
+            }, [webcamActive, examMode]);
 
             // Security: Block Right Click, Copy, Paste
             useEffect(() => {
