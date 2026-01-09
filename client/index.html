@@ -6662,6 +6662,8 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
             const detectionInterval = useRef(null);
             const autoCaptureInterval = useRef(null);
             const mediaRecorderRef = useRef(null);
+            const recordingSessionRef = useRef(null);
+            const segmentSequenceRef = useRef(0);
             const videoChunksRef = useRef([]);
             const recordingExamType = useRef(null); // Persist exam type for the recording session
             const [isRecording, setIsRecording] = useState(false); // UI Indicator
@@ -6794,198 +6796,88 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
                 return () => clearInterval(autoCaptureInterval.current);
             }, [examMode, isLocked, user.id]);
 
-            // Full Video Recording Logic (Single Continuous Video with PIP for Viva)
+            // SEGMENTED RECORDING LOGIC (StudentPortal)
             useEffect(() => {
-                // Allow recording for viva even if webcamActive is false (viva manages its own stream)
                 const shouldRecord = examMode && !isLocked && (webcamActive || examMode === 'VivaLive' || examMode === 'VivaWait');
 
                 if (!shouldRecord) {
                     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
                         mediaRecorderRef.current.stop();
                         setIsRecording(false);
+                        if (window.studentRecordingInterval) clearInterval(window.studentRecordingInterval);
+                        recordingSessionRef.current = null;
                     }
                     return;
                 }
 
-                const startRecording = async () => {
-                    // VIVA MODE: Picture-in-Picture Recording
-                    if (examMode === 'VivaLive') {
-                        const studentVideo = document.getElementById('student-cam-viva');
-                        const assessorVideoElement = document.querySelector('video[autoplay]:not([id])'); // Remote stream video
+                // Initialize Session if needed
+                if (!recordingSessionRef.current) {
+                    recordingSessionRef.current = `session_${user.id}_${Date.now()}`;
+                    segmentSequenceRef.current = 1;
+                }
 
-                        if (!studentVideo || !assessorVideoElement) {
-                            console.warn("Viva videos not ready for recording");
-                            return;
-                        }
+                const startSegment = () => {
+                    const stream = document.getElementById('student-cam')?.srcObject;
+                    if (!stream) return;
 
-                        // Create canvas for compositing
-                        const canvas = document.createElement('canvas');
-                        canvas.width = 1280;
-                        canvas.height = 720;
-                        const ctx = canvas.getContext('2d');
+                    let localChunks = [];
+                    let options = { mimeType: 'video/webm; codecs=vp8' };
+                    if (!MediaRecorder.isTypeSupported(options.mimeType)) options = { mimeType: 'video/webm' };
 
-                        videoChunksRef.current = [];
-                        recordingExamType.current = examMode;
+                    const recorder = new MediaRecorder(stream, options);
+                    recorder.ondataavailable = e => { if (e.data.size > 0) localChunks.push(e.data); };
+                    
+                    recorder.onstop = () => {
+                        const blob = new Blob(localChunks, { type: 'video/webm' });
+                        const currentSeq = segmentSequenceRef.current;
+                        const videoKey = `vid_${user.id}_${Date.now()}_part${currentSeq}`;
+                        
+                        console.log(`Segment ${currentSeq} Finalized. Size: ${blob.size}`);
 
-                        // Animation loop to composite both streams
-                        let animationId;
-                        const drawFrame = () => {
-                            // Clear canvas
-                            ctx.fillStyle = '#000000';
-                            ctx.fillRect(0, 0, 1280, 720);
+                        VideoDB.saveVideo(videoKey, blob).then(() => {
+                            window.Utils.saveResponse({
+                                studentId: user.id,
+                                examType: examMode,
+                                evidence: [{ 
+                                    img: null, 
+                                    time: new Date().toISOString(), 
+                                    type: 'VIDEO_INDEXED_DB', 
+                                    key: videoKey,
+                                    sessionId: recordingSessionRef.current,
+                                    sequence: currentSeq,
+                                    isSegment: true
+                                }]
+                            });
+                            // Auto-upload immediately
+                            window.Utils.uploadToCloud(true);
+                        }).catch(err => console.error("Save Failed", err));
+                    };
 
-                            // Draw student video (main, full canvas)
-                            if (studentVideo.readyState >= 2) {
-                                ctx.save();
-                                // Flip horizontally for natural view
-                                ctx.scale(-1, 1);
-                                ctx.drawImage(studentVideo, -1280, 0, 1280, 720);
-                                ctx.restore();
-                            }
-
-                            // Draw assessor video (overlay, bottom-right, 20% size)
-                            if (assessorVideoElement.readyState >= 2) {
-                                const pipWidth = 256;
-                                const pipHeight = 144;
-                                const pipX = 1280 - pipWidth - 20; // 20px from right
-                                const pipY = 720 - pipHeight - 20; // 20px from bottom
-
-                                // Draw border
-                                ctx.strokeStyle = '#4F46E5';
-                                ctx.lineWidth = 3;
-                                ctx.strokeRect(pipX - 2, pipY - 2, pipWidth + 4, pipHeight + 4);
-
-                                // Draw assessor video
-                                ctx.drawImage(assessorVideoElement, pipX, pipY, pipWidth, pipHeight);
-                            }
-
-                            animationId = requestAnimationFrame(drawFrame);
-                        };
-                        drawFrame();
-
-                        try {
-                            // Capture canvas stream
-                            const stream = canvas.captureStream(30); // 30 FPS
-                            let options = { mimeType: 'video/webm; codecs=vp8' };
-                            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                                console.warn("VP8 not supported, falling back to default webm");
-                                options = { mimeType: 'video/webm' };
-                            }
-
-                            const recorder = new MediaRecorder(stream, options);
-                            recorder.ondataavailable = e => {
-                                if (e.data.size > 0) videoChunksRef.current.push(e.data);
-                            };
-
-                            recorder.onstop = () => {
-                                setIsRecording(false);
-                                cancelAnimationFrame(animationId); // Stop animation loop
-
-                                const blob = new Blob(videoChunksRef.current, { type: 'video/webm' });
-                                const savedExamType = recordingExamType.current;
-                                console.log(`Viva PIP Recording Finalized. Size: ${blob.size} bytes`);
-
-                                const videoKey = `video_${user.id}_${savedExamType}_${Date.now()}`;
-                                VideoDB.saveVideo(videoKey, blob).then(() => {
-                                    console.log("Viva PIP video saved to IndexedDB:", videoKey);
-                                    if (savedExamType) {
-                                        window.Utils.saveResponse({
-                                            studentId: user.id,
-                                            examType: savedExamType,
-                                            evidence: [{ img: null, time: new Date().toISOString(), type: 'VIDEO_INDEXED_DB', key: videoKey }]
-                                        });
-                                        setTimeout(() => window.Utils.uploadToCloud(true), 1000);
-                                    }
-                                }).catch(err => {
-                                    console.error("IndexedDB Save Failed", err);
-                                    alert("Video Save Failed: " + err.message);
-                                });
-                            };
-
-                            recorder.start(1000);
-                            mediaRecorderRef.current = recorder;
-                            setIsRecording(true);
-                            console.log("Viva PIP Recording Started");
-                        } catch (e) {
-                            console.error("Viva Recording Error", e);
-                            cancelAnimationFrame(animationId);
-                        }
-                    }
-                    // REGULAR EXAMS: Student-only recording
-                    else {
-                        const stream = document.getElementById('student-cam')?.srcObject;
-                        if (stream) {
-                            videoChunksRef.current = [];
-                            recordingExamType.current = examMode;
-                            try {
-                                let options = { mimeType: 'video/webm; codecs=vp8' };
-                                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                                    console.warn("VP8 not supported, falling back to default webm");
-                                    options = { mimeType: 'video/webm' };
-                                }
-
-                                const recorder = new MediaRecorder(stream, options);
-                                recorder.ondataavailable = e => {
-                                    if (e.data.size > 0) videoChunksRef.current.push(e.data);
-                                };
-
-                                recorder.onstop = () => {
-                                    setIsRecording(false);
-                                    const blob = new Blob(videoChunksRef.current, { type: 'video/webm' });
-                                    const savedExamType = recordingExamType.current;
-                                    console.log(`Video Finalized. Size: ${blob.size} bytes. Exam Type: ${savedExamType}`);
-
-                                    const videoKey = `video_${user.id}_${savedExamType}`;
-                                    VideoDB.saveVideo(videoKey, blob).then(() => {
-                                        console.log("Full Video saved to IndexedDB:", videoKey);
-                                        if (savedExamType) {
-                                            window.Utils.saveResponse({
-                                                studentId: user.id,
-                                                examType: savedExamType,
-                                                evidence: [{ img: null, time: new Date().toISOString(), type: 'VIDEO_INDEXED_DB', key: videoKey }]
-                                            });
-                                            setTimeout(() => window.Utils.uploadToCloud(true), 1000);
-                                        }
-                                    }).catch(err => {
-                                        console.error("IndexedDB Save Failed", err);
-                                        alert("Video Save Failed: " + err.message);
-                                    });
-                                };
-
-                                recorder.start(1000);
-                                mediaRecorderRef.current = recorder;
-                                setIsRecording(true);
-                            } catch (e) {
-                                console.error("MediaRecorder Error", e);
-                            }
-                        }
-                    }
+                    recorder.start(1000);
+                    mediaRecorderRef.current = recorder;
+                    setIsRecording(true);
                 };
 
-                // Poll stream start
-                const attemptStart = setInterval(() => {
-                    if (examMode === 'VivaLive') {
-                        // For viva, wait for both video elements to be ready
-                        const studentVideo = document.getElementById('student-cam-viva');
-                        const assessorVideo = document.querySelector('video[autoplay]:not([id])');
-                        if (studentVideo?.srcObject && assessorVideo?.srcObject) {
-                            clearInterval(attemptStart);
-                            startRecording();
+                // Start First Segment
+                if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
+                    startSegment();
+                    
+                    // Setup Interval for Splits (10 mins)
+                    if (window.studentRecordingInterval) clearInterval(window.studentRecordingInterval);
+                    window.studentRecordingInterval = setInterval(() => {
+                        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+                            console.log("Auto-splitting student video...");
+                            mediaRecorderRef.current.stop();
+                            segmentSequenceRef.current += 1;
+                            setTimeout(startSegment, 200);
                         }
-                    } else {
-                        // For regular exams, wait for student camera
-                        const stream = document.getElementById('student-cam')?.srcObject;
-                        if (stream && stream.active) {
-                            clearInterval(attemptStart);
-                            startRecording();
-                        } else if (!examMode || isLocked) {
-                            clearInterval(attemptStart);
-                        }
-                    }
-                }, 500);
+                    }, 600000);
+                }
 
-                return () => clearInterval(attemptStart);
-            }, [examMode, webcamActive, isLocked, remoteStream]);
+                return () => {
+                    if (window.studentRecordingInterval) clearInterval(window.studentRecordingInterval);
+                };
+            }, [examMode, isLocked, webcamActive, user.id]);
 
             // Security: Block Right Click, Copy, Paste
             useEffect(() => {
@@ -7402,7 +7294,14 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
                             </div>
                         </div>
                         <div className="w-1/4 bg-gray-100 p-4 border-l">
-                            <video id="student-cam" autoPlay muted playsInline className="w-full bg-black rounded mb-2"></video>
+                            <div className="relative">
+                                <video id="student-cam" autoPlay muted playsInline className="w-full bg-black rounded mb-2 transform scale-x-[-1]"></video>
+                                {isRecording && (
+                                    <div className="absolute top-2 right-2 flex items-center gap-1 bg-red-600/90 text-white text-[10px] px-2 py-1 rounded-full animate-pulse shadow-lg z-10">
+                                        <div className="w-2 h-2 bg-white rounded-full"></div> REC
+                                    </div>
+                                )}
+                            </div>
                             <div className="grid grid-cols-4 gap-2">
                                 {questions.map((_, i) => <div key={i} onClick={() => setCurrentQ(i)} className={`h-8 flex items-center justify-center cursor-pointer rounded ${answers[i] ? 'bg-green-200' : 'bg-white'}`}>{i + 1}</div>)}
                             </div>
