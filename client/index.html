@@ -3222,6 +3222,8 @@
             const videoRef = useRef(null);
             const mediaRecorderRef = useRef(null);
             const chunksRef = useRef([]);
+            const recordingSessionRef = useRef(null);
+            const segmentSequenceRef = useRef(0);
             const socketRef = useRef(null);
             const peerRef = useRef(null);
 
@@ -5322,7 +5324,49 @@
         };
 
         // New StudentGradingView Component
-        const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, captureOnly = false }) => {
+                // SESSION PLAYER COMPONENT
+        const SessionPlayer = ({ parts }) => {
+            const [index, setIndex] = React.useState(0);
+            const [src, setSrc] = React.useState(null);
+            
+            React.useEffect(() => {
+                let active = true;
+                const load = async () => {
+                    setSrc(null);
+                    try {
+                        const blob = await VideoDB.getVideo(parts[index].key);
+                        if(active && blob) setSrc(URL.createObjectURL(blob));
+                    } catch(e) { console.error(e); }
+                };
+                load();
+                return () => { active = false; };
+            }, [index, parts]);
+
+            return (
+                <div className="relative bg-black w-full h-32 group-hover:h-auto transition-all">
+                    {src ? (
+                        <video 
+                            src={src} 
+                            controls 
+                            autoPlay
+                            className="w-full h-full object-contain"
+                            onEnded={() => {
+                                if(index < parts.length - 1) setIndex(index + 1);
+                            }}
+                        />
+                    ) : (
+                        <div className="flex items-center justify-center h-full text-white text-xs">
+                            Loading Part {index + 1}...
+                        </div>
+                    )}
+                    <div className="absolute top-0 right-0 bg-indigo-600 text-white text-[10px] px-2 py-1 font-bold z-10">
+                        Part {index + 1}/{parts.length}
+                    </div>
+                </div>
+            );
+        };
+
+const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, captureOnly = false }) => {
             const [evidence, setEvidence] = useState([]);
             const [answers, setAnswers] = useState({});
             const [grades, setGrades] = useState({});
@@ -5337,6 +5381,8 @@
             const videoRef = useRef(null);
             const mediaRecorderRef = useRef(null);
             const chunksRef = useRef([]);
+            const recordingSessionRef = useRef(null);
+            const segmentSequenceRef = useRef(0);
 
             useEffect(() => {
                 loadStudentResponse(student);
@@ -5497,9 +5543,14 @@
                     if (mediaRecorderRef.current) mediaRecorderRef.current.stop();
                     setIsRecording(false);
                     if (window.recordingInterval) clearInterval(window.recordingInterval);
+                    recordingSessionRef.current = null; // Reset Session
                 } else {
                     // START
                     if (!mediaStreamRef.current) return;
+                    
+                    // Initialize New Session
+                    recordingSessionRef.current = `session_${Date.now()}`;
+                    segmentSequenceRef.current = 1;
 
                     const startSegment = () => {
                         let localChunks = [];
@@ -5508,6 +5559,8 @@
                         recorder.onstop = async () => {
                             const blob = new Blob(localChunks, { type: 'video/webm' });
                             const key = `vid_${student.id}_${Date.now()}`;
+                            const currentSeq = segmentSequenceRef.current; // Capture current seq
+                            
                             try {
                                 await VideoDB.saveVideo(key, blob);
                                 const newEvidence = { 
@@ -5515,8 +5568,13 @@
                                     key: key, 
                                     time: new Date().toISOString(), 
                                     type: 'VIDEO_INDEXED_DB',
-                                    storage: 'indexeddb'
+                                    storage: 'indexeddb',
+                                    // METADATA FOR GROUPING
+                                    sessionId: recordingSessionRef.current,
+                                    sequence: currentSeq,
+                                    isSegment: true
                                 };
+                                
                                 const partialResponse = {
                                     studentId: student.id,
                                     batchId: batch.id,
@@ -5529,7 +5587,7 @@
                                 
                                 // AUTO SYNC
                                 const statusBtn = document.getElementById('sync-status-text');
-                                if(statusBtn) statusBtn.innerText = "Uploading Video Segment...";
+                                if(statusBtn) statusBtn.innerText = `Uploading Part ${currentSeq}...`;
                                 window.Utils.uploadToCloud(true).then(() => {
                                     if(statusBtn) statusBtn.innerText = "Synced";
                                 });
@@ -5550,6 +5608,7 @@
                         if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
                             console.log("Auto-splitting video segment...");
                             mediaRecorderRef.current.stop(); 
+                            segmentSequenceRef.current += 1; // Increment Sequence
                             setTimeout(startSegment, 200); 
                         }
                     }, 600000);
@@ -5725,7 +5784,7 @@
                                     let filtered = evidence;
                                     if (evidenceFilter === 'PHOTOS') filtered = evidence.filter(e => e.type?.includes('PHOTO') || e.type?.includes('IMG'));
                                     if (evidenceFilter === 'VIDEOS') filtered = evidence.filter(e => e.type?.includes('VIDEO'));
-                                    if (evidenceFilter === 'LOGS') filtered = evidence.filter(e => !e.type?.includes('PHOTO') && !e.type?.includes('VIDEO')); // Assuming logs are everything else
+                                    if (evidenceFilter === 'LOGS') filtered = evidence.filter(e => !e.type?.includes('PHOTO') && !e.type?.includes('VIDEO'));
 
                                     if (filtered.length === 0) return <p className="text-gray-400 text-sm text-center py-8">No records found for {evidenceFilter}</p>;
 
@@ -5748,39 +5807,70 @@
                                         );
                                     }
 
+                                    // GROUPING LOGIC
+                                    const grouped = [];
+                                    const sessions = {};
+                                    
+                                    filtered.forEach(e => {
+                                        if(e.sessionId) {
+                                            if(!sessions[e.sessionId]) {
+                                                sessions[e.sessionId] = { 
+                                                    ...e, 
+                                                    isGroup: true, 
+                                                    parts: [],
+                                                    type: 'VIDEO_SESSION' 
+                                                };
+                                                grouped.push(sessions[e.sessionId]);
+                                            }
+                                            sessions[e.sessionId].parts.push(e);
+                                        } else {
+                                            grouped.push(e);
+                                        }
+                                    });
+                                    
+                                    // Sort parts
+                                    Object.values(sessions).forEach(s => s.parts.sort((a,b) => a.sequence - b.sequence));
+
                                     return (
                                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                            {filtered.map((e, i) => (
+                                            {grouped.map((e, i) => (
                                                 <div key={i} className="relative group bg-gray-100 rounded overflow-hidden border">
-                                                    {e.type.includes('VIDEO') ? (
-                                                        e.key ? (
-                                                            // Video stored in IndexedDB
-                                                            <VideoPlayerDB videoKey={e.key} />
-                                                        ) : (
-                                                            // Video as blob/data URL
-                                                            <video src={e.img} controls className="w-full h-32 object-cover bg-black"
-                                                                onError={(ev) => {
-                                                                    ev.target.style.display = 'none';
-                                                                    ev.target.nextSibling.style.display = 'flex';
-                                                                }}
-                                                            />
-                                                        )
+                                                    {e.isGroup ? (
+                                                        <SessionPlayer parts={e.parts} />
                                                     ) : (
-                                                        <img src={e.img} className="w-full h-32 object-cover transition-transform group-hover:scale-105"
-                                                            onClick={() => {
-                                                                if (e.img.startsWith('blob:') || e.img.startsWith('data:')) {
-                                                                    const w = window.open("");
-                                                                    w.document.write(`<img src="${e.img}" style="max-width:100%"/>`);
-                                                                } else {
-                                                                    alert("Image not available on this device. Please sync from the source device.");
-                                                                }
-                                                            }}
-                                                            onError={(ev) => {
-                                                                ev.target.style.display = 'none';
-                                                                ev.target.nextSibling.style.display = 'flex';
-                                                            }}
-                                                        />
+                                                        <>
+                                                            {e.type.includes('VIDEO') ? (
+                                                                e.key ? (
+                                                                    // Use VideoPlayerDB if available, else fallback to video tag
+                                                                    typeof VideoPlayerDB !== 'undefined' ? <VideoPlayerDB videoKey={e.key} /> :
+                                                                    <SessionPlayer parts={[e]} /> 
+                                                                ) : (
+                                                                    <video src={e.img} controls className="w-full h-32 object-cover bg-black"
+                                                                        onError={(ev) => {
+                                                                            ev.target.style.display = 'none';
+                                                                            ev.target.nextSibling.style.display = 'flex';
+                                                                        }}
+                                                                    />
+                                                                )
+                                                            ) : (
+                                                                <img src={e.img} className="w-full h-32 object-cover transition-transform group-hover:scale-105"
+                                                                    onClick={() => {
+                                                                        if (e.img.startsWith('blob:') || e.img.startsWith('data:')) {
+                                                                            const w = window.open("");
+                                                                            w.document.write(`<img src="${e.img}" style="max-width:100%"/>`);
+                                                                        } else {
+                                                                            alert("Image not available on this device. Please sync from the source device.");
+                                                                        }
+                                                                    }}
+                                                                    onError={(ev) => {
+                                                                        ev.target.style.display = 'none';
+                                                                        ev.target.nextSibling.style.display = 'flex';
+                                                                    }}
+                                                                />
+                                                            )}
+                                                        </>
                                                     )}
+                                                    
                                                     {/* Fallback for Error */}
                                                     <div className="absolute inset-0 hidden flex-col items-center justify-center bg-gray-200 text-gray-500 p-2 text-center">
                                                         <Icons.XCircle className="w-8 h-8 mb-1" />
@@ -5791,7 +5881,7 @@
                                                         {new Date(e.time).toLocaleTimeString()}
                                                     </div>
                                                     <div className="absolute inset-x-0 bottom-0 bg-white/90 p-2 text-xs font-bold truncate text-center border-t">
-                                                        {e.type.replace(/_/g, ' ')}
+                                                        {e.isGroup ? `Exam Recording (${e.parts.length} Parts)` : e.type.replace(/_/g, ' ')}
                                                     </div>
                                                 </div>
                                             ))}
