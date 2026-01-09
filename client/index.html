@@ -2283,17 +2283,46 @@
 
                     console.log("Uploaded NOS & PC Data:", data);
 
+                    // Validation: Calculate totals from Excel
+                    let totalTheory = 0;
+                    let totalPractical = 0;
+                    let totalViva = 0;
+
+                    data.forEach(row => {
+                        totalTheory += parseFloat(row['Theory Marks']) || 0;
+                        totalPractical += parseFloat(row['Practical Marks']) || 0;
+                        totalViva += parseFloat(row['Viva Marks']) || 0;
+                    });
+
+                    // Round to 2 decimal places to avoid floating point errors
+                    totalTheory = Math.round(totalTheory * 100) / 100;
+                    totalPractical = Math.round(totalPractical * 100) / 100;
+                    totalViva = Math.round(totalViva * 100) / 100;
+
+                    const qpTheory = parseFloat(selectedQP.theoryMarks) || 0;
+                    const qpPractical = parseFloat(selectedQP.practicalMarks) || 0;
+                    const qpViva = parseFloat(selectedQP.vivaMarks) || 0;
+
+                    if (totalTheory !== qpTheory || totalPractical !== qpPractical || totalViva !== qpViva) {
+                        alert(`Validation Failed! Marks do not match Qualification Pack limits.\n\n` +
+                              `Excel Totals:\nTheory: ${totalTheory}, Practical: ${totalPractical}, Viva: ${totalViva}\n\n` +
+                              `QP Limits:\nTheory: ${qpTheory}, Practical: ${qpPractical}, Viva: ${qpViva}\n\n` +
+                              `Please correct the marks in your Excel file and try again.`);
+                        e.target.value = ''; // Reset file input
+                        return;
+                    }
+
                     // Group data by NOS
                     const nosMap = new Map();
-
+                    
                     data.forEach(row => {
                         const nosId = row['NOSID'] || row['NOS ID'];
                         const nosName = row['NOS Name'];
                         const pcNo = row['PC No'] || row['PC ID'];
                         const pcName = row['PC Name'];
-
+                        
                         if (!nosId) return;
-
+                        
                         // Create or get NOS entry
                         if (!nosMap.has(nosId)) {
                             nosMap.set(nosId, {
@@ -2309,7 +2338,7 @@
                                 pcs: []
                             });
                         }
-
+                        
                         // Add PC if present
                         if (pcNo && pcName) {
                             const nos = nosMap.get(nosId);
@@ -2330,12 +2359,12 @@
                     // Save all NOS and PCs
                     let nosCount = 0;
                     let pcCount = 0;
-
+                    
                     nosMap.forEach(nos => {
                         const { pcs, ...nosData } = nos;
                         window.Utils.saveNOS(nosData);
                         nosCount++;
-
+                        
                         pcs.forEach(pc => {
                             window.Utils.savePC(pc);
                             pcCount++;
@@ -2350,6 +2379,7 @@
                 };
                 reader.readAsBinaryString(file);
             };
+
 
 
 
