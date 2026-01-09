@@ -2289,12 +2289,15 @@
                     let totalViva = 0;
 
                     data.forEach(row => {
-                        totalTheory += parseFloat(row['Theory Marks']) || 0;
-                        totalPractical += parseFloat(row['Practical Marks']) || 0;
-                        totalViva += parseFloat(row['Viva Marks']) || 0;
+                        // Ensure we are only summing valid rows with NOSID
+                        if (row['NOSID'] || row['NOS ID']) {
+                            totalTheory += parseFloat(row['Theory Marks']) || 0;
+                            totalPractical += parseFloat(row['Practical Marks']) || 0;
+                            totalViva += parseFloat(row['Viva Marks']) || 0;
+                        }
                     });
 
-                    // Round to 2 decimal places to avoid floating point errors
+                    // Round to 2 decimal places
                     totalTheory = Math.round(totalTheory * 100) / 100;
                     totalPractical = Math.round(totalPractical * 100) / 100;
                     totalViva = Math.round(totalViva * 100) / 100;
@@ -2303,7 +2306,18 @@
                     const qpPractical = parseFloat(selectedQP.practicalMarks) || 0;
                     const qpViva = parseFloat(selectedQP.vivaMarks) || 0;
 
-                    if (totalTheory !== qpTheory || totalPractical !== qpPractical || totalViva !== qpViva) {
+                    console.log(`Validation Debug:
+                        Excel: T=${totalTheory}, P=${totalPractical}, V=${totalViva}
+                        QP: T=${qpTheory}, P=${qpPractical}, V=${qpViva}
+                    `);
+
+                    // Use a small tolerance for floating point comparison
+                    const epsilon = 0.01;
+                    const theoryMatch = Math.abs(totalTheory - qpTheory) < epsilon;
+                    const practicalMatch = Math.abs(totalPractical - qpPractical) < epsilon;
+                    const vivaMatch = Math.abs(totalViva - qpViva) < epsilon;
+
+                    if (!theoryMatch || !practicalMatch || !vivaMatch) {
                         alert(`Validation Failed! Marks do not match Qualification Pack limits.\n\n` +
                               `Excel Totals:\nTheory: ${totalTheory}, Practical: ${totalPractical}, Viva: ${totalViva}\n\n` +
                               `QP Limits:\nTheory: ${qpTheory}, Practical: ${qpPractical}, Viva: ${qpViva}\n\n` +
@@ -2379,6 +2393,7 @@
                 };
                 reader.readAsBinaryString(file);
             };
+
 
 
 
