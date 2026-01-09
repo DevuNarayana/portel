@@ -2281,33 +2281,76 @@
                     const ws = wb.Sheets[wsname];
                     const data = window.XLSX.utils.sheet_to_json(ws);
 
-                    console.log("Uploaded NOS Data:", data);
+                    console.log("Uploaded NOS & PC Data:", data);
 
-                    let count = 0;
+                    // Group data by NOS
+                    const nosMap = new Map();
+                    
                     data.forEach(row => {
-                        if (row['NOS ID'] && row['NOS Name']) {
-                            const nos = {
+                        const nosId = row['NOSID'] || row['NOS ID'];
+                        const nosName = row['NOS Name'];
+                        const pcNo = row['PC No'] || row['PC ID'];
+                        const pcName = row['PC Name'];
+                        
+                        if (!nosId) return;
+                        
+                        // Create or get NOS entry
+                        if (!nosMap.has(nosId)) {
+                            nosMap.set(nosId, {
                                 id: window.Utils.generateId(),
                                 qpId: selectedQP.id,
-                                code: row['NOS ID'],
-                                name: row['NOS Name'],
-                                theoryCutoff: row['Theory Cutoff'] || '',
-                                practicalCutoff: row['Practical Cutoff'] || '',
-                                vivaCutoff: row['Viva Cutoff'] || '',
-                                overallCutoff: row['Overall Cutoff'] || '',
-                                createdAt: new Date().toISOString()
-                            };
-                            window.Utils.saveNOS(nos);
-                            count++;
+                                code: nosId,
+                                name: nosName || '',
+                                theoryCutoff: '',
+                                practicalCutoff: '',
+                                vivaCutoff: '',
+                                overallCutoff: '',
+                                createdAt: new Date().toISOString(),
+                                pcs: []
+                            });
                         }
+                        
+                        // Add PC if present
+                        if (pcNo && pcName) {
+                            const nos = nosMap.get(nosId);
+                            nos.pcs.push({
+                                id: window.Utils.generateId(),
+                                nosId: nos.id,
+                                code: pcNo,
+                                name: pcName,
+                                theoryMarks: parseFloat(row['Theory Marks']) || 0,
+                                practicalMarks: parseFloat(row['Practical Marks']) || 0,
+                                vivaMarks: parseFloat(row['Viva Marks']) || 0,
+                                totalMarks: parseFloat(row['Total Marks']) || (parseFloat(row['Theory Marks']) || 0) + (parseFloat(row['Practical Marks']) || 0) + (parseFloat(row['Viva Marks']) || 0),
+                                createdAt: new Date().toISOString()
+                            });
+                        }
+                    });
+
+                    // Save all NOS and PCs
+                    let nosCount = 0;
+                    let pcCount = 0;
+                    
+                    nosMap.forEach(nos => {
+                        const { pcs, ...nosData } = nos;
+                        window.Utils.saveNOS(nosData);
+                        nosCount++;
+                        
+                        pcs.forEach(pc => {
+                            window.Utils.savePC(pc);
+                            pcCount++;
+                        });
                     });
 
                     window.Utils.uploadToCloud(true);
                     setNOSList(window.Utils.getNOS());
+                    setPCList(window.Utils.getPCs());
                     setShowUploadNOSModal(false);
-                    alert(`Successfully uploaded ${count} NOS records.`);
+                    alert(`Successfully uploaded ${nosCount} NOS and ${pcCount} PC records.`);
                 };
                 reader.readAsBinaryString(file);
+            };
+
             };
 
             const handleUploadPC = (e) => {
