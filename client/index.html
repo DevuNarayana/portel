@@ -6628,6 +6628,10 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
 
         // STUDENT PORTAL
         const StudentPortal = ({ user }) => {
+            useEffect(() => {
+                if (!window.VideoDB) alert("CRITICAL: Video Storage System Missing!");
+                else window.VideoDB.init().catch(e => alert("CRITICAL: Video Storage Init Failed: " + e.message));
+            }, []);
             const [examMode, setExamMode] = useState(null); // 'Theory', 'Practical', 'VivaWait'
             const [questions, setQuestions] = useState([]);
             const [currentQ, setCurrentQ] = useState(0);
@@ -6850,7 +6854,7 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
                             });
                             // Auto-upload immediately
                             window.Utils.uploadToCloud(true);
-                        }).catch(err => console.error("Save Failed", err));
+                        }).catch(err => { console.error("Save Failed", err); alert("VIDEO SAVE FAILED: " + err.message); });
                     };
 
                     recorder.start(1000);
