@@ -5500,13 +5500,31 @@
                     chunksRef.current = [];
                     const recorder = new MediaRecorder(mediaStreamRef.current);
                     recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
-                    recorder.onstop = () => {
+                    recorder.onstop = async () => {
                         const blob = new Blob(chunksRef.current, { type: 'video/webm' });
-                        const reader = new FileReader();
-                        reader.onloadend = () => {
-                            addEvidence(reader.result, 'MANUAL_CAPTURE_VIDEO');
-                        };
-                        reader.readAsDataURL(blob);
+                        const key = `vid_${student.id}_${Date.now()}`;
+                        try {
+                            await VideoDB.saveVideo(key, blob);
+                            const newEvidence = { 
+                                img: null, 
+                                key: key, 
+                                time: new Date().toISOString(), 
+                                type: 'VIDEO_INDEXED_DB',
+                                storage: 'indexeddb'
+                            };
+                            const partialResponse = {
+                                studentId: student.id,
+                                batchId: batch.id,
+                                examType: examType,
+                                evidence: [newEvidence],
+                                status: 'draft'
+                            };
+                            window.Utils.saveResponse(partialResponse);
+                            setEvidence(prev => [...prev, newEvidence]);
+                        } catch (err) {
+                            console.error("Failed to save video to DB", err);
+                            alert("Video save failed: " + err.message);
+                        }
                     };
                     recorder.start();
                     setIsRecording(true);
