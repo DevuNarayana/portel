@@ -343,6 +343,7 @@
                                                         const chunkIds = [];
                                                         const chunkSize = 800000; // 800KB safe chunks
                                                         const totalChunks = Math.ceil(size / chunkSize);
+                                                        const chunkPromises = [];
 
                                                         for (let c = 0; c < totalChunks; c++) {
                                                             const start = c * chunkSize;
@@ -350,21 +351,27 @@
                                                             const chunkData = ev.img.substring(start, end);
 
                                                             const chunkId = `chk_${item.id}_${j}_${c}_${Date.now()}`;
-                                                            // Upload Chunk
-                                                            await db.collection('synced_chunks').doc(chunkId).set({
-                                                                parentId: item.id,
-                                                                evidenceIndex: j,
-                                                                index: c,
-                                                                total: totalChunks,
-                                                                data: chunkData
-                                                            });
-                                                            chunkIds.push(chunkId);
+                                                            // Queue Upload Promise
+                                                            chunkPromises.push(
+                                                                db.collection('synced_chunks').doc(chunkId).set({
+                                                                    parentId: item.id,
+                                                                    evidenceIndex: j,
+                                                                    index: c,
+                                                                    total: totalChunks,
+                                                                    data: chunkData
+                                                                }).then(() => {
+                                                                    chunkIds.push(chunkId);
+                                                                })
+                                                            );
                                                         }
+
+                                                        // Execute all chunk uploads in parallel
+                                                        await Promise.all(chunkPromises);
 
                                                         // Replace Data with Reference
                                                         clean.evidence[j].img = null; // Clear huge string
                                                         clean.evidence[j].isChunked = true;
-                                                        clean.evidence[j].chunkIds = chunkIds;
+                                                        clean.evidence[j].chunkIds = chunkIds.sort(); // Ensure order might be needed, but index is saved
                                                         clean.evidence[j].originalSize = size;
                                                     }
                                                 }
