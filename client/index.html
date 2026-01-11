@@ -5469,6 +5469,28 @@
                                 setSrc(part.downloadUrl);
                                 setSourceType('Cloud');
                             }
+                        } else if (part.isChunked && part.chunkIds && part.chunkIds.length > 0) {
+                            // NEW: Handle Chunked Video from Firestore
+                            try {
+                                const chunkDocs = await Promise.all(part.chunkIds.map(id => db.collection('synced_chunks').doc(id).get()));
+                                // Sort by index stored in doc data
+                                const validChunks = chunkDocs.filter(d => d.exists).map(d => d.data()).sort((a, b) => a.index - b.index);
+
+                                if (validChunks.length > 0) {
+                                    const combinedBase64 = validChunks.map(c => c.data).join('');
+                                    // Use base64ToBlob utility if available, or fetch
+                                    const blob = await (await fetch(combinedBase64)).blob();
+
+                                    if (active) {
+                                        setSrc(URL.createObjectURL(blob));
+                                        setSourceType('Cloud Chunks');
+                                    }
+                                } else {
+                                    console.warn("Chunks missing for part", part);
+                                }
+                            } catch (err) {
+                                console.error("Error reassembling chunks", err);
+                            }
                         } else {
                             console.warn("Video Part Missing (No Local Blob, No Base64, & No Cloud URL)", part);
                         }
