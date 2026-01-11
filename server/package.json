@@ -3,6 +3,9 @@
     "version": "5.2.0",
     "description": "Backend for Online Exam System",
     "main": "index.js",
+    "engines": {
+        "node": ">=18.0.0"
+    },
     "scripts": {
         "start": "node index.js",
         "dev": "nodemon index.js"
