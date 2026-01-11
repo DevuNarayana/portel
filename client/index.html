@@ -5383,15 +5383,27 @@
                         const part = parts[index];
                         // Try Local IndexedDB first
                         let blob = null;
-                        try { blob = await VideoDB.getVideo(part.key); } catch (e) { }
+
+                        // Determine Key: Use part.key, part.originalKey (from loadStudentResponse), or fallback to part.img if offloaded
+                        let key = part.key || part.originalKey;
+                        if (!key && part.storage === 'indexeddb' && part.img && !part.img.startsWith('data:') && !part.img.startsWith('blob:')) {
+                            key = part.img;
+                        }
+
+                        if (key) {
+                            try { blob = await VideoDB.getVideo(key); } catch (e) { }
+                        }
 
                         if (blob) {
                             if (active) setSrc(URL.createObjectURL(blob));
+                        } else if (part.img && (typeof part.img === 'string') && (part.img.startsWith('data:') || part.img.startsWith('blob:'))) {
+                            // Fallback to Embedded Base64 or Blob URL
+                            if (active) setSrc(part.img);
                         } else if (part.downloadUrl) {
                             // Fallback to Cloud URL
                             if (active) setSrc(part.downloadUrl);
                         } else {
-                            console.warn("Video Part Missing (No Local Blob & No Cloud URL)", part);
+                            console.warn("Video Part Missing (No Local Blob, No Base64, & No Cloud URL)", part);
                         }
                     } catch (e) { console.error(e); }
                 };
@@ -5899,18 +5911,7 @@
                                                     ) : (
                                                         <>
                                                             {e.type.includes('VIDEO') ? (
-                                                                e.key ? (
-                                                                    // Use VideoPlayerDB if available, else fallback to video tag
-                                                                    typeof VideoPlayerDB !== 'undefined' ? <VideoPlayerDB videoKey={e.key} /> :
-                                                                        <SessionPlayer parts={[e]} />
-                                                                ) : (
-                                                                    <video src={e.img} controls className="w-full h-32 object-cover bg-black"
-                                                                        onError={(ev) => {
-                                                                            ev.target.style.display = 'none';
-                                                                            ev.target.nextSibling.style.display = 'flex';
-                                                                        }}
-                                                                    />
-                                                                )
+                                                                <SessionPlayer parts={[e]} />
                                                             ) : (
                                                                 <img src={e.img} className="w-full h-32 object-cover transition-transform group-hover:scale-105"
                                                                     onClick={() => {
