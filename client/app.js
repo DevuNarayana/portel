@@ -400,9 +400,12 @@ const StudentPortal = ({ user }) => {
         }
     }, [activeExam]);
 
+    const [mediaRecorder, setMediaRecorder] = useState(null);
+    const [recordedChunks, setRecordedChunks] = useState([]);
+
     const startWebcam = async () => {
         try {
-            const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
             setStream(mediaStream);
             setTimeout(() => {
                 const videoElement = document.getElementById('webcam-feed');
@@ -410,6 +413,17 @@ const StudentPortal = ({ user }) => {
                     videoElement.srcObject = mediaStream;
                 }
             }, 100);
+
+            // Start Recording
+            const recorder = new MediaRecorder(mediaStream, { mimeType: 'video/webm; codecs=vp9' });
+            recorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0) {
+                    setRecordedChunks((prev) => [...prev, event.data]);
+                }
+            };
+            recorder.start(1000); // 1s chunks
+            setMediaRecorder(recorder);
+
         } catch (err) {
             alert("Webcam currently unavailable. Please ensure you have given permission. (Check URL bar icons)");
             console.error(err);
@@ -417,6 +431,9 @@ const StudentPortal = ({ user }) => {
     };
 
     const stopWebcam = () => {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            mediaRecorder.stop();
+        }
         if (stream) {
             stream.getTracks().forEach(track => track.stop());
             setStream(null);
@@ -430,9 +447,9 @@ const StudentPortal = ({ user }) => {
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             canvas.getContext('2d').drawImage(video, 0, 0);
-            const imageSrc = canvas.toDataURL('image/jpeg');
-            // Save evidence silently
-            // console.log("Snapshot captured"); 
+            // const imageSrc = canvas.toDataURL('image/jpeg'); // Unused variable
+            // Save evidence silently? 
+            // NOTE: We are now capturing full video, so snapshots are secondary or optional.
         }
     };
 
@@ -446,16 +463,36 @@ const StudentPortal = ({ user }) => {
         setActiveExam(false);
         stopWebcam();
 
+        // Compile Video Blob
+        const videoBlob = new Blob(recordedChunks, { type: 'video/webm' });
+
         // Save Result
         const submission = {
             studentId: user.id,
             examId: 'exam_001',
             answers: answers,
             score: calculateScore(),
-            submittedAt: new Date().toISOString()
+            submittedAt: new Date().toISOString(),
+            evidence: [
+                {
+                    type: 'VIDEO_WEBCAM',
+                    timestamp: new Date().toISOString(),
+                    img: null, // Will be filled by saveResponse (base64) or stored in IndexedDB
+                    // We need to pass the BLOB to saveResponse logic if possible, 
+                    // OR convert to Base64 here. 
+                    // given saveResponse logic handles base64 string "img":
+                }
+            ]
         };
-        window.Utils.saveResponse(submission);
-        alert("Exam Submitted Successfully!");
+
+        // Convert Blob to Base64 for compatibility with existing saveResponse
+        const reader = new FileReader();
+        reader.readAsDataURL(videoBlob);
+        reader.onloadend = () => {
+            submission.evidence[0].img = reader.result; // Set Base64
+            window.Utils.saveResponse(submission);
+            alert("Exam Submitted Successfully! Video Evidence Captured.");
+        };
     };
 
     const calculateScore = () => {
