@@ -5374,11 +5374,13 @@
         const SessionPlayer = ({ parts }) => {
             const [index, setIndex] = React.useState(0);
             const [src, setSrc] = React.useState(null);
+            const [sourceType, setSourceType] = React.useState(null); // 'Local' | 'Cloud'
 
             React.useEffect(() => {
                 let active = true;
                 const load = async () => {
                     setSrc(null);
+                    setSourceType(null);
                     try {
                         const part = parts[index];
                         // Try Local IndexedDB first
@@ -5395,13 +5397,22 @@
                         }
 
                         if (blob) {
-                            if (active) setSrc(URL.createObjectURL(blob));
+                            if (active) {
+                                setSrc(URL.createObjectURL(blob));
+                                setSourceType('Local');
+                            }
                         } else if (part.img && (typeof part.img === 'string') && (part.img.startsWith('data:') || part.img.startsWith('blob:'))) {
                             // Fallback to Embedded Base64 or Blob URL
-                            if (active) setSrc(part.img);
+                            if (active) {
+                                setSrc(part.img);
+                                setSourceType('Local');
+                            }
                         } else if (part.downloadUrl) {
                             // Fallback to Cloud URL
-                            if (active) setSrc(part.downloadUrl);
+                            if (active) {
+                                setSrc(part.downloadUrl);
+                                setSourceType('Cloud');
+                            }
                         } else {
                             console.warn("Video Part Missing (No Local Blob, No Base64, & No Cloud URL)", part);
                         }
@@ -5428,8 +5439,15 @@
                             Loading Part {index + 1}...
                         </div>
                     )}
-                    <div className="absolute top-0 right-0 bg-indigo-600 text-white text-[10px] px-2 py-1 font-bold z-10">
-                        Part {index + 1}/{parts.length}
+                    <div className="absolute top-0 right-0 flex gap-1">
+                        {sourceType === 'Cloud' && (
+                            <div className="bg-green-600 text-white text-[10px] px-2 py-1 font-bold z-10 flex items-center gap-1">
+                                <Icons.Cloud className="w-3 h-3" /> Synced
+                            </div>
+                        )}
+                        <div className="bg-indigo-600 text-white text-[10px] px-2 py-1 font-bold z-10 backdrop-blur-sm bg-opacity-80">
+                            Part {index + 1}/{parts.length}
+                        </div>
                     </div>
                 </div>
             );
