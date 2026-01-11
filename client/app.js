@@ -489,9 +489,10 @@ const StudentPortal = ({ user }) => {
             evidence: []
         };
 
-        const saveAndAlert = () => {
-            window.Utils.saveResponse(submission);
-            alert("Exam Submitted Successfully! Video Evidence Captured.");
+        const saveAndAlert = async () => {
+            await window.Utils.saveResponse(submission);
+            alert("Exam Submitted Successfully! Starting Upload...");
+            window.Utils.uploadToCloud(false); // Trigger visible sync
         };
 
         if (videoBlob) {
@@ -711,12 +712,15 @@ const App = () => {
                         <span className="font-bold text-gray-800 text-lg">SmarterExam</span>
                         <span className="ml-2 px-2 py-1 bg-indigo-100 text-indigo-700 text-xs rounded-full font-medium uppercase">{user.role}</span>
                     </div>
-                    <button
-                        onClick={handleLogout}
-                        className="text-gray-500 hover:text-red-600 flex items-center gap-2 text-sm font-medium transition-colors"
-                    >
-                        Logout
-                    </button>
+                    <div className="flex items-center gap-4">
+                        <span id="sync-status-text" className="text-sm text-gray-500 font-medium"></span>
+                        <button
+                            onClick={handleLogout}
+                            className="text-gray-500 hover:text-red-600 flex items-center gap-2 text-sm font-medium transition-colors"
+                        >
+                            Logout
+                        </button>
+                    </div>
                 </div>
             </header>
 
