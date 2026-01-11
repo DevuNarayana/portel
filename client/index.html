@@ -257,12 +257,14 @@
                 };
                 let success = 0;
                 let failCount = 0;
+                let skipped = 0;
                 const statusBtn = document.getElementById('sync-status-text');
-                if (statusBtn) statusBtn.innerText = "Uploading...";
+                if (statusBtn) statusBtn.innerText = "Syncing...";
 
                 // Check Network
                 if (!navigator.onLine) {
                     if (!silent) alert("No Internet Connection. Sync skipped.");
+                    if (statusBtn) statusBtn.innerText = "Offline";
                     return;
                 }
 
@@ -275,20 +277,33 @@
                     try {
                         const dataStr = localStorage.getItem(key);
                         if (dataStr && dataStr !== '[]') {
-                            const items = JSON.parse(dataStr);
+                            let items = JSON.parse(dataStr);
+                            let listChanged = false;
+
                             if (Array.isArray(items)) {
-                                for (const item of items) {
+                                for (let i = 0; i < items.length; i++) {
+                                    const item = items[i];
+
+                                    // Optimization: Skip already synced items unless forced (TODO: Add force flag if needed)
+                                    // We assume if it has an ID and synced=true, it's done.
+                                    // Exception: 'responses' might have new evidence added. We should check 'lastUpdated' or similar if we had it.
+                                    // For now, simple check: if synced=true, skip.
+                                    if (item.synced) {
+                                        skipped++;
+                                        continue;
+                                    }
+
                                     try {
-                                        // 1. Rehydration Logic
+                                        // 1. Rehydration Logic (Only for unsynced items)
                                         if ((route === 'responses' || route === 'manual_captures') && item.evidence && Array.isArray(item.evidence)) {
                                             for (let j = 0; j < item.evidence.length; j++) {
                                                 const ev = item.evidence[j];
                                                 // DETECT OFFLOADED MEDIA: storage='indexeddb' OR type='VIDEO_INDEXED_DB' OR presence of key string
                                                 const isOffloaded = ev.storage === 'indexeddb' || ev.type === 'VIDEO_INDEXED_DB' || (ev.key && !ev.img);
 
-                                                if (isOffloaded) {
+                                                if (isOffloaded && !ev.img) { // Only rehydrate if not already present (base64)
                                                     const keyToFetch = ev.img || ev.key;
-                                                    console.log(`Rehydrating evidence ${j} for sync. Key: ${keyToFetch}`);
+                                                    // console.log(`Rehydrating evidence ${j} for sync. Key: ${keyToFetch}`);
                                                     if (keyToFetch) {
                                                         const blob = await VideoDB.getVideo(keyToFetch);
                                                         if (blob) {
@@ -299,7 +314,7 @@
                                                             });
                                                             item.evidence[j] = { ...ev, img: base64 };
                                                         } else {
-                                                            console.warn(`Local video file not found for key: ${keyToFetch}. Sync will skip video content.`);
+                                                            // console.warn(`Local video file not found for key: ${keyToFetch}. Sync will skip video content.`);
                                                         }
                                                     }
                                                 }
@@ -309,10 +324,12 @@
                                         // 2. ID Generation
                                         if (!item.id) {
                                             item.id = window.Utils.generateId ? window.Utils.generateId() : Date.now().toString(36);
+                                            listChanged = true;
                                         }
 
                                         // 3. CHUNKING LOGIC FOR LARGE EVIDENCE
                                         const clean = JSON.parse(JSON.stringify(item));
+                                        delete clean.synced; // Don't upload the synced flag itself (optional, but cleaner)
 
                                         if (clean.evidence && Array.isArray(clean.evidence)) {
                                             for (let j = 0; j < clean.evidence.length; j++) {
@@ -356,6 +373,10 @@
 
                                         // 4. Individual Write
                                         await db.collection(route).doc(item.id).set(clean, { merge: true });
+
+                                        // Mark as Synced
+                                        items[i].synced = true;
+                                        listChanged = true;
                                         success++;
 
                                     } catch (innerErr) {
@@ -364,13 +385,18 @@
                                     }
                                 }
                             }
+
+                            // Save updated list (with synced=true flags) back to LocalStorage
+                            if (listChanged) {
+                                localStorage.setItem(key, JSON.stringify(items));
+                            }
                         }
                     } catch (e) { console.error(`Upload error ${route}`, e); }
                 }
 
-                const msg = `Synced ${success} items. ${failCount > 0 ? `Failed: ${failCount}.` : ''}`;
+                const msg = `Synced ${success} items. Skipped ${skipped}. ${failCount > 0 ? `Failed: ${failCount}.` : ''}`;
                 console.log(msg);
-                if (!silent && failCount > 0) alert(msg + " Check console for details.");
+                if (!silent && (success > 0 || failCount > 0)) alert(msg);
                 if (statusBtn) statusBtn.innerText = "Synced";
             },
 
