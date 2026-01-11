@@ -1,0 +1,25 @@
+Found 3 errors:
+Mismatched '}' at index 402319, expected closing for '(' from index 401934
+Context:
+}]
+                        })
+                    });
+                    const data = await respons
+
+Mismatched ')' at index 402320, expected closing for '{' from index 401884
+Context:
+]
+                        })
+                    });
+                    const data = await response
+
+Unexpected closing '}' at index 405498
+Context:
+iv>
+                </div>
+            );
+        };
+
+        
+        const PracticalQuestionRunner
+

@@ -13,6 +13,7 @@
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -94,6 +95,7 @@
 
         let db = null;
         let auth = null;
+        let storage = null;
 
         try {
             // Initialize Firebase
@@ -101,6 +103,7 @@
                 firebase.initializeApp(firebaseConfig);
                 db = firebase.firestore();
                 auth = firebase.auth();
+                storage = firebase.storage();
 
                 // Enable Offline Persistence
                 db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
@@ -119,9 +122,9 @@
         window.VideoDB = {
             dbName: 'ProctoringDB',
             storeName: 'videos',
-            init: async () => {
+            init: async (retry = true) => {
                 return new Promise((resolve, reject) => {
-                    const request = indexedDB.open(VideoDB.dbName, 1);
+                    const request = indexedDB.open(VideoDB.dbName, 2);
                     request.onupgradeneeded = (event) => {
                         const db = event.target.result;
                         if (!db.objectStoreNames.contains(VideoDB.storeName)) {
@@ -129,17 +132,50 @@
                         }
                     };
                     request.onsuccess = (event) => resolve(event.target.result);
-                    request.onerror = (event) => reject(event.target.error);
+                    request.onerror = async (event) => {
+                        console.error("VideoDB Init Error", event.target.error);
+                        if (retry) {
+                            console.warn("Attempting to auto-heal VideoDB...");
+                            try {
+                                await new Promise((res, rej) => {
+                                    const delReq = indexedDB.deleteDatabase(VideoDB.dbName);
+                                    delReq.onsuccess = res;
+                                    delReq.onerror = rej;
+                                });
+                                console.log("VideoDB Deleted. Re-initializing...");
+                                resolve(await VideoDB.init(false));
+                            } catch (e) {
+                                reject(e);
+                            }
+                        } else {
+                            reject(event.target.error);
+                        }
+                    };
                 });
             },
             saveVideo: async (key, blob) => {
-                const db = await VideoDB.init();
-                return new Promise((resolve, reject) => {
-                    const tx = db.transaction(VideoDB.storeName, 'readwrite');
-                    tx.oncomplete = () => resolve();
-                    tx.onerror = (e) => reject(e.target.error);
-                    tx.objectStore(VideoDB.storeName).put(blob, key);
-                });
+                try {
+                    const db = await VideoDB.init();
+                    return new Promise((resolve, reject) => {
+                        const tx = db.transaction(VideoDB.storeName, 'readwrite');
+                        tx.oncomplete = () => resolve();
+                        tx.onerror = (e) => reject(e.target.error);
+                        tx.objectStore(VideoDB.storeName).put(blob, key);
+                    });
+                } catch (e) {
+                    console.error("VideoDB Save Error", e);
+                    // Try one more time with fresh init (force heal if needed)
+                    if (e.name === 'NotFoundError' || e.message.includes('not found')) {
+                        const db = await VideoDB.init(true); // force init retry
+                        return new Promise((resolve, reject) => {
+                            const tx = db.transaction(VideoDB.storeName, 'readwrite');
+                            tx.oncomplete = () => resolve();
+                            tx.onerror = (e) => reject(e.target.error);
+                            tx.objectStore(VideoDB.storeName).put(blob, key);
+                        });
+                    }
+                    throw e;
+                }
             },
             getVideo: async (key) => {
                 const db = await VideoDB.init();
@@ -837,13 +873,23 @@
                         }
                     }
 
+                    if (!response.id) response.id = `${response.studentId}_${response.examType}`;
+
                     const list = window.Utils.getResponses();
                     const existing = list.findIndex(r => r.studentId === response.studentId && r.examType === response.examType);
                     if (existing >= 0) {
                         const old = list[existing];
-                        let newEvidence = old.evidence || [];
+                        let newEvidence = [...(old.evidence || [])];
                         if (response.evidence) {
-                            newEvidence = [...newEvidence, ...response.evidence];
+                            response.evidence.forEach(newItem => {
+                                // Check if this evidence key already exists to update it (e.g. adding downloadUrl)
+                                const idx = newItem.key ? newEvidence.findIndex(e => e.key === newItem.key) : -1;
+                                if (idx >= 0) {
+                                    newEvidence[idx] = { ...newEvidence[idx], ...newItem };
+                                } else {
+                                    newEvidence.push(newItem);
+                                }
+                            });
                         }
                         list[existing] = { ...old, ...response, evidence: newEvidence };
                     }
@@ -2319,24 +2365,24 @@
 
                     if (!theoryMatch || !practicalMatch || !vivaMatch) {
                         alert(`Validation Failed! Marks do not match Qualification Pack limits.\n\n` +
-                              `Excel Totals:\nTheory: ${totalTheory}, Practical: ${totalPractical}, Viva: ${totalViva}\n\n` +
-                              `QP Limits:\nTheory: ${qpTheory}, Practical: ${qpPractical}, Viva: ${qpViva}\n\n` +
-                              `Please correct the marks in your Excel file and try again.`);
+                            `Excel Totals:\nTheory: ${totalTheory}, Practical: ${totalPractical}, Viva: ${totalViva}\n\n` +
+                            `QP Limits:\nTheory: ${qpTheory}, Practical: ${qpPractical}, Viva: ${qpViva}\n\n` +
+                            `Please correct the marks in your Excel file and try again.`);
                         e.target.value = ''; // Reset file input
                         return;
                     }
 
                     // Group data by NOS
                     const nosMap = new Map();
-                    
+
                     data.forEach(row => {
                         const nosId = row['NOSID'] || row['NOS ID'];
                         const nosName = row['NOS Name'];
                         const pcNo = row['PC No'] || row['PC ID'];
                         const pcName = row['PC Name'];
-                        
+
                         if (!nosId) return;
-                        
+
                         // Create or get NOS entry
                         if (!nosMap.has(nosId)) {
                             nosMap.set(nosId, {
@@ -2352,7 +2398,7 @@
                                 pcs: []
                             });
                         }
-                        
+
                         // Add PC if present
                         if (pcNo && pcName) {
                             const nos = nosMap.get(nosId);
@@ -2373,12 +2419,12 @@
                     // Save all NOS and PCs
                     let nosCount = 0;
                     let pcCount = 0;
-                    
+
                     nosMap.forEach(nos => {
                         const { pcs, ...nosData } = nos;
                         window.Utils.saveNOS(nosData);
                         nosCount++;
-                        
+
                         pcs.forEach(pc => {
                             window.Utils.savePC(pc);
                             pcCount++;
@@ -5324,19 +5370,30 @@
         };
 
         // New StudentGradingView Component
-                // SESSION PLAYER COMPONENT
+        // SESSION PLAYER COMPONENT
         const SessionPlayer = ({ parts }) => {
             const [index, setIndex] = React.useState(0);
             const [src, setSrc] = React.useState(null);
-            
+
             React.useEffect(() => {
                 let active = true;
                 const load = async () => {
                     setSrc(null);
                     try {
-                        const blob = await VideoDB.getVideo(parts[index].key);
-                        if(active && blob) setSrc(URL.createObjectURL(blob));
-                    } catch(e) { console.error(e); }
+                        const part = parts[index];
+                        // Try Local IndexedDB first
+                        let blob = null;
+                        try { blob = await VideoDB.getVideo(part.key); } catch (e) { }
+
+                        if (blob) {
+                            if (active) setSrc(URL.createObjectURL(blob));
+                        } else if (part.downloadUrl) {
+                            // Fallback to Cloud URL
+                            if (active) setSrc(part.downloadUrl);
+                        } else {
+                            console.warn("Video Part Missing (No Local Blob & No Cloud URL)", part);
+                        }
+                    } catch (e) { console.error(e); }
                 };
                 load();
                 return () => { active = false; };
@@ -5345,13 +5402,13 @@
             return (
                 <div className="relative bg-black w-full h-32 group-hover:h-auto transition-all">
                     {src ? (
-                        <video 
-                            src={src} 
-                            controls 
+                        <video
+                            src={src}
+                            controls
                             autoPlay
                             className="w-full h-full object-contain"
                             onEnded={() => {
-                                if(index < parts.length - 1) setIndex(index + 1);
+                                if (index < parts.length - 1) setIndex(index + 1);
                             }}
                         />
                     ) : (
@@ -5366,7 +5423,7 @@
             );
         };
 
-const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, captureOnly = false }) => {
+        const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, captureOnly = false }) => {
             const [evidence, setEvidence] = useState([]);
             const [answers, setAnswers] = useState({});
             const [grades, setGrades] = useState({});
@@ -5549,7 +5606,7 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
                 } else {
                     // START
                     if (!mediaStreamRef.current) return;
-                    
+
                     // Initialize New Session
                     recordingSessionRef.current = `session_${Date.now()}`;
                     segmentSequenceRef.current = 1;
@@ -5562,13 +5619,13 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
                             const blob = new Blob(localChunks, { type: 'video/webm' });
                             const key = `vid_${student.id}_${Date.now()}`;
                             const currentSeq = segmentSequenceRef.current; // Capture current seq
-                            
+
                             try {
                                 await VideoDB.saveVideo(key, blob);
-                                const newEvidence = { 
-                                    img: null, 
-                                    key: key, 
-                                    time: new Date().toISOString(), 
+                                const newEvidence = {
+                                    img: null,
+                                    key: key,
+                                    time: new Date().toISOString(),
                                     type: 'VIDEO_INDEXED_DB',
                                     storage: 'indexeddb',
                                     // METADATA FOR GROUPING
@@ -5576,7 +5633,7 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
                                     sequence: currentSeq,
                                     isSegment: true
                                 };
-                                
+
                                 const partialResponse = {
                                     studentId: student.id,
                                     batchId: batch.id,
@@ -5586,14 +5643,14 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
                                 };
                                 window.Utils.saveResponse(partialResponse);
                                 setEvidence(prev => [...prev, newEvidence]);
-                                
+
                                 // AUTO SYNC
                                 const statusBtn = document.getElementById('sync-status-text');
-                                if(statusBtn) statusBtn.innerText = `Uploading Part ${currentSeq}...`;
+                                if (statusBtn) statusBtn.innerText = `Uploading Part ${currentSeq}...`;
                                 window.Utils.uploadToCloud(true).then(() => {
-                                    if(statusBtn) statusBtn.innerText = "Synced";
+                                    if (statusBtn) statusBtn.innerText = "Synced";
                                 });
-                                
+
                             } catch (err) {
                                 console.error("Failed to save video to DB", err);
                             }
@@ -5609,9 +5666,9 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
                     window.recordingInterval = setInterval(() => {
                         if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
                             console.log("Auto-splitting video segment...");
-                            mediaRecorderRef.current.stop(); 
+                            mediaRecorderRef.current.stop();
                             segmentSequenceRef.current += 1; // Increment Sequence
-                            setTimeout(startSegment, 200); 
+                            setTimeout(startSegment, 200);
                         }
                     }, 600000);
                 }
@@ -5812,15 +5869,15 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
                                     // GROUPING LOGIC
                                     const grouped = [];
                                     const sessions = {};
-                                    
+
                                     filtered.forEach(e => {
-                                        if(e.sessionId) {
-                                            if(!sessions[e.sessionId]) {
-                                                sessions[e.sessionId] = { 
-                                                    ...e, 
-                                                    isGroup: true, 
+                                        if (e.sessionId) {
+                                            if (!sessions[e.sessionId]) {
+                                                sessions[e.sessionId] = {
+                                                    ...e,
+                                                    isGroup: true,
                                                     parts: [],
-                                                    type: 'VIDEO_SESSION' 
+                                                    type: 'VIDEO_SESSION'
                                                 };
                                                 grouped.push(sessions[e.sessionId]);
                                             }
@@ -5829,9 +5886,9 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
                                             grouped.push(e);
                                         }
                                     });
-                                    
+
                                     // Sort parts
-                                    Object.values(sessions).forEach(s => s.parts.sort((a,b) => a.sequence - b.sequence));
+                                    Object.values(sessions).forEach(s => s.parts.sort((a, b) => a.sequence - b.sequence));
 
                                     return (
                                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -5845,7 +5902,7 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
                                                                 e.key ? (
                                                                     // Use VideoPlayerDB if available, else fallback to video tag
                                                                     typeof VideoPlayerDB !== 'undefined' ? <VideoPlayerDB videoKey={e.key} /> :
-                                                                    <SessionPlayer parts={[e]} /> 
+                                                                        <SessionPlayer parts={[e]} />
                                                                 ) : (
                                                                     <video src={e.img} controls className="w-full h-32 object-cover bg-black"
                                                                         onError={(ev) => {
@@ -5872,7 +5929,7 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
                                                             )}
                                                         </>
                                                     )}
-                                                    
+
                                                     {/* Fallback for Error */}
                                                     <div className="absolute inset-0 hidden flex-col items-center justify-center bg-gray-200 text-gray-500 p-2 text-center">
                                                         <Icons.XCircle className="w-8 h-8 mb-1" />
@@ -5970,35 +6027,35 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
 
             useEffect(() => {
                 const loadEvents = () => {
-                        const batches = window.Utils.getBatches();
-                        // Map batches to events
-                        const evts = [];
-                        batches.forEach(b => {
-                            if (b.startDate) {
-                                const d = new Date(b.startDate);
-                                if (!isNaN(d.getTime())) {
-                                    evts.push({
-                                        date: d,
-                                        title: `Start: ${b.name}`,
-                                        type: 'start',
-                                        data: b
-                                    });
-                                }
+                    const batches = window.Utils.getBatches();
+                    // Map batches to events
+                    const evts = [];
+                    batches.forEach(b => {
+                        if (b.startDate) {
+                            const d = new Date(b.startDate);
+                            if (!isNaN(d.getTime())) {
+                                evts.push({
+                                    date: d,
+                                    title: `Start: ${b.name}`,
+                                    type: 'start',
+                                    data: b
+                                });
                             }
-                            if (b.endDate) {
-                                const d = new Date(b.endDate);
-                                if (!isNaN(d.getTime())) {
-                                    evts.push({
-                                        date: d,
-                                        title: `End: ${b.name}`,
-                                        type: 'end',
-                                        data: b
-                                    });
-                                }
+                        }
+                        if (b.endDate) {
+                            const d = new Date(b.endDate);
+                            if (!isNaN(d.getTime())) {
+                                evts.push({
+                                    date: d,
+                                    title: `End: ${b.name}`,
+                                    type: 'end',
+                                    data: b
+                                });
                             }
-                        });
-                        setEvents(evts);
-                    };
+                        }
+                    });
+                    setEvents(evts);
+                };
                 loadEvents();
                 window.addEventListener('cloud-sync-complete', loadEvents);
                 return () => window.removeEventListener('cloud-sync-complete', loadEvents);
@@ -6628,7 +6685,7 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
 
         // STUDENT PORTAL
         const StudentPortal = ({ user }) => {
-            
+
 
             useEffect(() => {
                 if (!window.VideoDB) alert("CRITICAL: Video Storage System Missing!");
@@ -6697,7 +6754,7 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
             };
 
 
-            
+
 
             /* useEffect(() => {
                 if (examMode && !streamActive) {
@@ -6859,36 +6916,86 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
                     if (!stream) return;
 
                     let localChunks = [];
-                    let options = { mimeType: 'video/webm; codecs=vp8' };
-                    if (!MediaRecorder.isTypeSupported(options.mimeType)) options = { mimeType: 'video/webm' };
+                    let options = { mimeType: 'video/webm' };
+                    if (!MediaRecorder.isTypeSupported(options.mimeType)) options = { mimeType: 'video/mp4' };
+                    if (!MediaRecorder.isTypeSupported(options.mimeType)) options = {}; // Fallback to default
 
                     const recorder = new MediaRecorder(stream, options);
                     recorder.ondataavailable = e => { if (e.data.size > 0) localChunks.push(e.data); };
-                    
+
                     recorder.onstop = () => {
+                        if (localChunks.length === 0) return;
                         const blob = new Blob(localChunks, { type: 'video/webm' });
                         const currentSeq = segmentSequenceRef.current;
                         const videoKey = `vid_${user.id}_${Date.now()}_part${currentSeq}`;
-                        
+
                         console.log(`Segment ${currentSeq} Finalized. Size: ${blob.size}`);
 
-                        VideoDB.saveVideo(videoKey, blob).then(() => {
-                            window.Utils.saveResponse({
-                                studentId: user.id,
-                                examType: examMode,
-                                evidence: [{ 
-                                    img: null, 
-                                    time: new Date().toISOString(), 
-                                    type: 'VIDEO_INDEXED_DB', 
-                                    key: videoKey,
-                                    sessionId: recordingSessionRef.current,
-                                    sequence: currentSeq,
-                                    isSegment: true
-                                }]
-                            });
-                            // Auto-upload immediately
-                            window.Utils.uploadToCloud(true);
-                        }).catch(err => { console.error("Save Failed", err); alert("VIDEO SAVE FAILED: " + err.message); });
+                        // 1. SAVE METADATA FIRST (So it shows up in Assessor Portal instantly)
+                        const evidenceEntry = {
+                            img: null, // No preview image for video to save space
+                            time: new Date().toISOString(),
+                            type: 'VIDEO_INDEXED_DB',
+                            key: videoKey,
+                            sessionId: recordingSessionRef.current,
+                            sequence: currentSeq,
+                            isSegment: true,
+                            status: 'pending' // Flag to track upload status
+                        };
+
+                        window.Utils.saveResponse({
+                            studentId: user.id,
+                            examType: examMode,
+                            evidence: [evidenceEntry]
+                        });
+
+                        // 2. FORCE SYNC
+                        window.Utils.uploadToCloud(true);
+
+                        // 3. SAVE VIDEO BLOB & UPLOAD (Parallel)
+                        const saveLocal = VideoDB.saveVideo(videoKey, blob).then(() => console.log("Video Blob Saved to DB"));
+
+                        const uploadCloud = new Promise((resolve, reject) => {
+                            if (window.firebase && storage) {
+                                console.log("Starting Cloud Video Upload...");
+                                const ref = storage.ref(`exam_videos/${user.id}/${videoKey}.webm`);
+                                const task = ref.put(blob);
+
+                                task.on('state_changed',
+                                    (snapshot) => {
+                                        const p = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                                        console.log(`Upload Progress: ${p.toFixed(0)}%`);
+                                    },
+                                    (err) => { console.error("Upload Error", err); reject(err); },
+                                    () => {
+                                        task.snapshot.ref.getDownloadURL().then(url => {
+                                            console.log("Upload Complete! URL:", url);
+                                            // Update Metadata with URL
+                                            window.Utils.saveResponse({
+                                                studentId: user.id,
+                                                examType: examMode,
+                                                evidence: [{
+                                                    key: videoKey,
+                                                    downloadUrl: url,
+                                                    status: 'uploaded'
+                                                }]
+                                            });
+                                            window.Utils.uploadToCloud(true); // Sync updated metadata
+                                            resolve(url);
+                                        });
+                                    }
+                                );
+                            } else {
+                                resolve(null); // Skip if no storage configured
+                            }
+                        });
+
+                        Promise.allSettled([saveLocal, uploadCloud]).then(() => {
+                            console.log("Video Processing Complete (Local + Cloud)");
+                        }).catch(err => {
+                            console.error("Save Failed", err);
+                            alert("VIDEO SAVE ERROR: " + err.message + "\n(Check console for details)");
+                        });
                     };
 
                     recorder.start(1000);
@@ -6899,7 +7006,7 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
                 // Start First Segment
                 if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
                     startSegment();
-                    
+
                     // Setup Interval for Splits (10 mins)
                     if (window.studentRecordingInterval) clearInterval(window.studentRecordingInterval);
                     window.studentRecordingInterval = setInterval(() => {
@@ -6909,11 +7016,15 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
                             segmentSequenceRef.current += 1;
                             setTimeout(startSegment, 200);
                         }
-                    }, 600000);
+                    }, 3600000); // 1 Hour Interval (Effective Single Video)
                 }
 
                 return () => {
                     if (window.studentRecordingInterval) clearInterval(window.studentRecordingInterval);
+                    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+                        console.log("Stopping recorder on unmount...");
+                        mediaRecorderRef.current.stop();
+                    }
                 };
             }, [examMode, isLocked, webcamActive, user.id]);
             // Ensure Camera Stream is Attached to Video Element
@@ -7345,26 +7456,28 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
                         <div className="w-1/4 bg-gray-100 p-4 border-l">
                             <div className="relative">
                                 <div className="relative bg-black rounded mb-2 h-48 flex items-center justify-center overflow-hidden">
-                                <video id="student-cam" autoPlay muted playsInline className={`w-full h-full object-cover transform scale-x-[-1] ${streamActive ? 'block' : 'hidden'}`}></video>
-                                {!streamActive && (
-                                    <div className="absolute inset-0 flex flex-col items-center justify-center z-20">
-                                        <p className="text-white text-xs mb-2">Camera Off</p>
-                                        <button onClick={startCameraManual} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-full font-bold shadow text-sm">
-                                            Start Camera
-                                        </button>
-                                    </div>
-                                )}
-                                {isRecording && (
-                                    <div className="absolute top-2 right-2 flex items-center gap-1 bg-red-600/90 text-white text-[10px] px-2 py-1 rounded-full animate-pulse shadow-lg z-10">
-                                        <div className="w-2 h-2 bg-white rounded-full"></div> REC
-                                    </div>
-                                )}
-                            </div>
-                            <div className="grid grid-cols-4 gap-2">
-                                {questions.map((_, i) => <div key={i} onClick={() => setCurrentQ(i)} className={`h-8 flex items-center justify-center cursor-pointer rounded ${answers[i] ? 'bg-green-200' : 'bg-white'}`}>{i + 1}</div>)}
+                                    <video id="student-cam" autoPlay muted playsInline className={`w-full h-full object-cover transform scale-x-[-1] ${streamActive ? 'block' : 'hidden'}`}></video>
+                                    {!streamActive && (
+                                        <div className="absolute inset-0 flex flex-col items-center justify-center z-20">
+                                            <p className="text-white text-xs mb-2">Camera Off</p>
+                                            <button onClick={startCameraManual} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-full font-bold shadow text-sm">
+                                                Start Camera
+                                            </button>
+                                        </div>
+                                    )}
+                                    {isRecording && (
+                                        <div className="absolute top-2 right-2 flex items-center gap-1 bg-red-600/90 text-white text-[10px] px-2 py-1 rounded-full animate-pulse shadow-lg z-10">
+                                            <div className="w-2 h-2 bg-white rounded-full"></div> REC
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="grid grid-cols-4 gap-2">
+                                    {questions.map((_, i) => <div key={i} onClick={() => setCurrentQ(i)} className={`h-8 flex items-center justify-center cursor-pointer rounded ${answers[i] ? 'bg-green-200' : 'bg-white'}`}>{i + 1}</div>)}
+                                </div>
                             </div>
                         </div>
                     </div>
+
                 );
             }
 
@@ -7612,4 +7725,4 @@ const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, capt
     </script>
 </body>
 
-</html>
+</html>c
