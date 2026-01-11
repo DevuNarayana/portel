@@ -3,8 +3,9 @@ services:
     name: portel-backend
     env: node
     plan: free
-    buildCommand: cd server && npm install
-    startCommand: cd server && npm start
+    root: server
+    buildCommand: npm install
+    startCommand: npm start
     branch: master
     envVars:
       - key: PORT
