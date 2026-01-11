@@ -258,6 +258,7 @@
                 let success = 0;
                 let failCount = 0;
                 let skipped = 0;
+                const startTime = Date.now();
                 const statusBtn = document.getElementById('sync-status-text');
                 if (statusBtn) statusBtn.innerText = "Syncing...";
 
@@ -424,9 +425,10 @@
                     } catch (e) { console.error(`Upload error ${route}`, e); }
                 }
 
-                const msg = `Synced ${success} items. Skipped ${skipped}. ${failCount > 0 ? `Failed: ${failCount}.` : ''}`;
+                const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+                const msg = `Synced ${success} items in ${duration}s. Skipped ${skipped}. ${failCount > 0 ? `Failed: ${failCount}.` : ''}`;
                 console.log(msg);
-                if (!silent && (success > 0 || failCount > 0)) alert(msg);
+                if (!silent && (success > 0 || failCount > 0 || skipped > 0)) alert(msg);
                 if (statusBtn) statusBtn.innerText = "Synced";
             },
 
