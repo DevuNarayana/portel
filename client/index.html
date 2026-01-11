@@ -284,6 +284,9 @@
                                 for (let i = 0; i < items.length; i++) {
                                     const item = items[i];
 
+                                    // Update Progress UI
+                                    if (statusBtn) statusBtn.innerText = `Syncing ${route}: ${i + 1}/${items.length}...`;
+
                                     // Optimization: Skip already synced items unless forced (TODO: Add force flag if needed)
                                     // We assume if it has an ID and synced=true, it's done.
                                     // Exception: 'responses' might have new evidence added. We should check 'lastUpdated' or similar if we had it.
@@ -343,30 +346,50 @@
                                                         const chunkIds = [];
                                                         const chunkSize = 800000; // 800KB safe chunks
                                                         const totalChunks = Math.ceil(size / chunkSize);
-                                                        const chunkPromises = [];
 
-                                                        for (let c = 0; c < totalChunks; c++) {
+                                                        // CONCURRENCY CONTROL: Limit to 5 parallel uploads to prevent crashing/timeout
+                                                        // Helper for concurrency
+                                                        const asyncPool = async (poolLimit, array, iteratorFn) => {
+                                                            const ret = [];
+                                                            const executing = [];
+                                                            for (const item of array) {
+                                                                const p = Promise.resolve().then(() => iteratorFn(item, array));
+                                                                ret.push(p);
+                                                                if (poolLimit <= array.length) {
+                                                                    const e = p.then(() => executing.splice(executing.indexOf(e), 1));
+                                                                    executing.push(e);
+                                                                    if (executing.length >= poolLimit) {
+                                                                        await Promise.race(executing);
+                                                                    }
+                                                                }
+                                                            }
+                                                            return Promise.all(ret);
+                                                        };
+
+                                                        // Create task list (just indices)
+                                                        const chunkIndices = Array.from({ length: totalChunks }, (_, k) => k);
+
+                                                        await asyncPool(5, chunkIndices, async (c) => {
                                                             const start = c * chunkSize;
                                                             const end = start + chunkSize;
                                                             const chunkData = ev.img.substring(start, end);
 
                                                             const chunkId = `chk_${item.id}_${j}_${c}_${Date.now()}`;
-                                                            // Queue Upload Promise
-                                                            chunkPromises.push(
-                                                                db.collection('synced_chunks').doc(chunkId).set({
+                                                            // Upload Chunk with retry logic (simple)
+                                                            try {
+                                                                await db.collection('synced_chunks').doc(chunkId).set({
                                                                     parentId: item.id,
                                                                     evidenceIndex: j,
                                                                     index: c,
                                                                     total: totalChunks,
                                                                     data: chunkData
-                                                                }).then(() => {
-                                                                    chunkIds.push(chunkId);
-                                                                })
-                                                            );
-                                                        }
-
-                                                        // Execute all chunk uploads in parallel
-                                                        await Promise.all(chunkPromises);
+                                                                });
+                                                                chunkIds.push(chunkId);
+                                                            } catch (err) {
+                                                                console.error(`Chunk upload failed ${chunkId}`, err);
+                                                                throw err; // Propagate to fail the item sync
+                                                            }
+                                                        });
 
                                                         // Replace Data with Reference
                                                         clean.evidence[j].img = null; // Clear huge string
