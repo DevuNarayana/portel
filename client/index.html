@@ -9,7 +9,7 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/lucide@0.263.1"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
@@ -247,7 +247,7 @@
 
             // CLOUD SYNC FUNCTIONS
             // CLOUD SYNC FUNCTIONS
-            uploadToCloud: async (silent = false) => {
+            uploadToCloud: async (silent = false, targetRoute = null, filterFn = null) => {
                 const MAPPING = {
                     'batches': DB_KEYS.BATCHES, 'students': DB_KEYS.STUDENTS,
                     'qps': DB_KEYS.QP, 'nos': DB_KEYS.NOS, 'pcs': DB_KEYS.PC,
@@ -258,14 +258,15 @@
                 let success = 0;
                 let failCount = 0;
                 let skipped = 0;
+                let lastError = "";
                 const startTime = Date.now();
                 const statusBtn = document.getElementById('sync-status-text');
-                if (statusBtn) statusBtn.innerText = "Syncing...";
+                if (statusBtn && !silent) statusBtn.innerText = "Syncing...";
 
                 // Check Network
                 if (!navigator.onLine) {
                     if (!silent) alert("No Internet Connection. Sync skipped.");
-                    if (statusBtn) statusBtn.innerText = "Offline";
+                    if (statusBtn && !silent) statusBtn.innerText = "Offline";
                     return;
                 }
 
@@ -274,11 +275,37 @@
                     return;
                 }
 
+                // Helper for concurrency
+                const asyncPool = async (poolLimit, array, iteratorFn) => {
+                    const ret = [];
+                    const executing = [];
+                    for (const item of array) {
+                        const p = Promise.resolve().then(() => iteratorFn(item, array));
+                        ret.push(p);
+                        if (poolLimit <= array.length) {
+                            const e = p.then(() => executing.splice(executing.indexOf(e), 1));
+                            executing.push(e);
+                            if (executing.length >= poolLimit) {
+                                await Promise.race(executing);
+                            }
+                        }
+                    }
+                    return Promise.all(ret);
+                };
+
                 for (const [route, key] of Object.entries(MAPPING)) {
+                    if (targetRoute && route !== targetRoute) continue;
                     try {
                         const dataStr = localStorage.getItem(key);
                         if (dataStr && dataStr !== '[]') {
                             let items = JSON.parse(dataStr);
+
+                            // Apply Filter if Provided (e.g. Sync Only Current Student)
+                            if (filterFn) {
+                                const originalCount = items.length;
+                                items = items.filter(filterFn);
+                                console.log(`[Sync] Filtering ${route}: ${originalCount} -> ${items.length} items`);
+                            }
                             let listChanged = false;
 
                             if (Array.isArray(items)) {
@@ -286,123 +313,175 @@
                                     const item = items[i];
 
                                     // Update Progress UI
-                                    if (statusBtn) statusBtn.innerText = `Syncing ${route}: ${i + 1}/${items.length}...`;
+                                    if (statusBtn && !silent) statusBtn.innerText = `Syncing ${route}: ${i + 1}/${items.length}...`;
 
-                                    // Optimization: Skip already synced items unless forced (TODO: Add force flag if needed)
-                                    // We assume if it has an ID and synced=true, it's done.
-                                    // Exception: 'responses' might have new evidence added. We should check 'lastUpdated' or similar if we had it.
-                                    // For now, simple check: if synced=true, skip.
+                                    // Check if already synced
                                     if (item.synced) {
                                         skipped++;
                                         continue;
                                     }
 
                                     try {
-                                        // 1. Rehydration Logic (Only for unsynced items)
-                                        if ((route === 'responses' || route === 'manual_captures') && item.evidence && Array.isArray(item.evidence)) {
-                                            for (let j = 0; j < item.evidence.length; j++) {
-                                                const ev = item.evidence[j];
-                                                // DETECT OFFLOADED MEDIA: storage='indexeddb' OR type='VIDEO_INDEXED_DB' OR presence of key string
-                                                const isOffloaded = ev.storage === 'indexeddb' || ev.type === 'VIDEO_INDEXED_DB' || (ev.key && !ev.img);
+                                        // 3. CHUNKING & UPLOAD LOGIC
+                                        // We clone 'item' to 'clean' for upload, ensuring we don't mutate the local storage version destructively until done.
+                                        // However, for optimization, we modify 'clean' to remove huge data.
+                                        let clean = { ...item }; // Shallow copy is safer for now, we deal with evidence separately
+                                        delete clean.synced;
 
-                                                if (isOffloaded && !ev.img) { // Only rehydrate if not already present (base64)
-                                                    const keyToFetch = ev.img || ev.key;
-                                                    // console.log(`Rehydrating evidence ${j} for sync. Key: ${keyToFetch}`);
-                                                    if (keyToFetch) {
-                                                        const blob = await VideoDB.getVideo(keyToFetch);
-                                                        if (blob) {
-                                                            const base64 = await new Promise((resolve) => {
-                                                                const reader = new FileReader();
-                                                                reader.onloadend = () => resolve(reader.result);
-                                                                reader.readAsDataURL(blob);
-                                                            });
-                                                            item.evidence[j] = { ...ev, img: base64 };
-                                                        } else {
-                                                            // console.warn(`Local video file not found for key: ${keyToFetch}. Sync will skip video content.`);
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
+                                        // Handle Evidence Deeply
+                                        if (item.evidence && Array.isArray(item.evidence)) {
+                                            // Make a deep copy of evidence array to modify
+                                            clean.evidence = [...item.evidence];
 
-                                        // 2. ID Generation
-                                        if (!item.id) {
-                                            item.id = window.Utils.generateId ? window.Utils.generateId() : Date.now().toString(36);
-                                            listChanged = true;
-                                        }
-
-                                        // 3. CHUNKING LOGIC FOR LARGE EVIDENCE
-                                        const clean = JSON.parse(JSON.stringify(item));
-                                        delete clean.synced; // Don't upload the synced flag itself (optional, but cleaner)
-
-                                        if (clean.evidence && Array.isArray(clean.evidence)) {
                                             for (let j = 0; j < clean.evidence.length; j++) {
                                                 const ev = clean.evidence[j];
-                                                if (ev.img && typeof ev.img === 'string') {
-                                                    const size = ev.img.length;
-                                                    // Threshold: 900,000 chars (~900KB)
-                                                    if (size > 900000) {
-                                                        console.log(`Chunking large evidence ${j} for item ${item.id} (Size: ${size})`);
+                                                // Identify Large Data
+                                                let blobToProcess = null;
+                                                let stringToProcess = null;
 
-                                                        const chunkIds = [];
-                                                        const chunkSize = 800000; // 800KB safe chunks
-                                                        const totalChunks = Math.ceil(size / chunkSize);
+                                                // Case A: Offloaded Blob (IndexedDB)
+                                                // Check keys
+                                                const keyToFetch = (ev.storage === 'indexeddb' || ev.type === 'VIDEO_INDEXED_DB') ? (ev.img || ev.key || ev.originalKey) : null;
 
-                                                        // CONCURRENCY CONTROL: Limit to 5 parallel uploads to prevent crashing/timeout
-                                                        // Helper for concurrency
-                                                        const asyncPool = async (poolLimit, array, iteratorFn) => {
-                                                            const ret = [];
-                                                            const executing = [];
-                                                            for (const item of array) {
-                                                                const p = Promise.resolve().then(() => iteratorFn(item, array));
-                                                                ret.push(p);
-                                                                if (poolLimit <= array.length) {
-                                                                    const e = p.then(() => executing.splice(executing.indexOf(e), 1));
-                                                                    executing.push(e);
-                                                                    if (executing.length >= poolLimit) {
-                                                                        await Promise.race(executing);
-                                                                    }
+                                                if (keyToFetch && !ev.img?.startsWith('data:')) {
+                                                    try {
+                                                        const b = await VideoDB.getVideo(keyToFetch);
+                                                        if (b) blobToProcess = b;
+                                                        else console.warn("Missing local blob for key", keyToFetch);
+                                                    } catch (e) { console.error("Blob fetch error", e); }
+                                                }
+                                                // Case B: In-Memory Base64 String
+                                                else if (ev.img && typeof ev.img === 'string' && ev.img.length > 50000) {
+                                                    stringToProcess = ev.img;
+                                                }
+
+                                                // Process Logic
+                                                const chunkSize = 600000; // 600 KB (Base64 Safe: ~800KB < 1MB Limit)
+                                                let size = 0;
+                                                let needsChunking = false;
+
+                                                if (blobToProcess) {
+                                                    size = blobToProcess.size; // Bytes
+                                                    // Convert to Base64 size approx check: size * 1.33
+                                                    if (size > 600000) needsChunking = true;
+                                                } else if (stringToProcess) {
+                                                    size = stringToProcess.length; // Chars
+                                                    if (size > 800000) needsChunking = true;
+                                                }
+
+                                                if (needsChunking) {
+                                                    console.log(`Chunking item ${item.id} ev ${j} (Size: ${size})...`);
+                                                    const chunkIds = [];
+                                                    let totalChunks = 0;
+
+                                                    // Define Chunks
+                                                    if (blobToProcess) {
+                                                        totalChunks = Math.ceil(blobToProcess.size / chunkSize);
+                                                        const idxs = Array.from({ length: totalChunks }, (_, k) => k);
+
+                                                        // Streaming Upload (Memory Efficient)
+                                                        await asyncPool(3, idxs, async (c) => {
+                                                            const start = c * chunkSize;
+                                                            const end = Math.min(start + chunkSize, blobToProcess.size);
+                                                            const slice = blobToProcess.slice(start, end, blobToProcess.type);
+
+                                                            // Read Slice
+                                                            const base64ChunkFull = await new Promise(r => {
+                                                                const reader = new FileReader();
+                                                                reader.onload = () => r(reader.result);
+                                                                reader.readAsDataURL(slice);
+                                                            });
+
+                                                            // Strip Header "data:video/webm;base64,"
+                                                            let validData = base64ChunkFull.split(',')[1];
+
+                                                            // For Chunk 0, re-add header (Receiver usually expects full data flow, but our viewer logic joins them)
+                                                            // The Viewer logic: `const combinedBase64 = validChunks...join('')`.
+                                                            // `fetch(combinedBase64)`
+                                                            // So we MUST have the header on Chunk 0, and NO header on others.
+                                                            if (c === 0 && base64ChunkFull.includes(',')) {
+                                                                validData = base64ChunkFull.split(',')[0] + ',' + validData;
+                                                            }
+
+                                                            const chunkId = `chk_${item.id}_${j}_${String(c).padStart(5, '0')}_${Date.now()}`;
+                                                            // Use Retry
+                                                            let retries = 3;
+                                                            while (retries > 0) {
+                                                                try {
+                                                                    await db.collection('synced_chunks').doc(chunkId).set({
+                                                                        parentId: item.id,
+                                                                        evidenceIndex: j,
+                                                                        index: c,
+                                                                        total: totalChunks,
+                                                                        data: validData
+                                                                    });
+                                                                    if (statusBtn && !silent) statusBtn.innerText = `Syncing Video Part ${j + 1}: Chunk ${c + 1}/${totalChunks}...`;
+                                                                    chunkIds.push(chunkId);
+                                                                    break;
+                                                                } catch (e) {
+                                                                    retries--;
+                                                                    console.warn("Chunk Retry", c, e);
+                                                                    if (retries === 0) throw e;
+                                                                    await new Promise(r => setTimeout(r, 1000));
                                                                 }
                                                             }
-                                                            return Promise.all(ret);
-                                                        };
+                                                        });
+                                                    }
+                                                    else if (stringToProcess) {
+                                                        // Legacy String Chunking
+                                                        totalChunks = Math.ceil(stringToProcess.length / chunkSize);
+                                                        const idxs = Array.from({ length: totalChunks }, (_, k) => k);
 
-                                                        // Create task list (just indices)
-                                                        const chunkIndices = Array.from({ length: totalChunks }, (_, k) => k);
-
-                                                        await asyncPool(5, chunkIndices, async (c) => {
+                                                        await asyncPool(3, idxs, async (c) => {
                                                             const start = c * chunkSize;
                                                             const end = start + chunkSize;
-                                                            const chunkData = ev.img.substring(start, end);
-
+                                                            const chunkData = stringToProcess.substring(start, end);
                                                             const chunkId = `chk_${item.id}_${j}_${c}_${Date.now()}`;
-                                                            // Upload Chunk with retry logic (simple)
-                                                            try {
-                                                                await db.collection('synced_chunks').doc(chunkId).set({
-                                                                    parentId: item.id,
-                                                                    evidenceIndex: j,
-                                                                    index: c,
-                                                                    total: totalChunks,
-                                                                    data: chunkData
-                                                                });
-                                                                chunkIds.push(chunkId);
-                                                            } catch (err) {
-                                                                console.error(`Chunk upload failed ${chunkId}`, err);
-                                                                throw err; // Propagate to fail the item sync
-                                                            }
-                                                        });
 
-                                                        // Replace Data with Reference
-                                                        clean.evidence[j].img = null; // Clear huge string
-                                                        clean.evidence[j].isChunked = true;
-                                                        clean.evidence[j].chunkIds = chunkIds.sort(); // Ensure order might be needed, but index is saved
-                                                        clean.evidence[j].originalSize = size;
+                                                            await db.collection('synced_chunks').doc(chunkId).set({
+                                                                parentId: item.id, evidenceIndex: j, index: c, total: totalChunks, data: chunkData
+                                                            });
+                                                            if (statusBtn && !silent) statusBtn.innerText = `Syncing Upload ${j + 1}: Chunk ${c + 1}/${totalChunks}...`;
+                                                            chunkIds.push(chunkId);
+                                                        });
+                                                    }
+
+                                                    // Update Item with References
+                                                    clean.evidence[j] = {
+                                                        ...ev,
+                                                        img: null, // Remove data
+                                                        isChunked: true,
+                                                        chunkIds: chunkIds.sort(),
+                                                        originalSize: size
+                                                    };
+                                                } else {
+                                                    // SMALL FILE OR NO BLOB
+                                                    // Steps: Rehydrate if needed (Blob -> Base64) for single upload
+                                                    if (blobToProcess && !clean.evidence[j].img) {
+                                                        const base64 = await new Promise(r => {
+                                                            const reader = new FileReader();
+                                                            reader.onload = () => r(reader.result);
+                                                            reader.readAsDataURL(blobToProcess);
+                                                        });
+                                                        clean.evidence[j].img = base64;
                                                     }
                                                 }
                                             }
                                         }
 
                                         // 4. Individual Write
+                                        if (!item.id) {
+                                            // Only generate if absolutely missing (Rare for Responses)
+                                            item.id = Date.now().toString(36);
+                                            console.warn("Generated missing ID for item during upload:", item.id);
+                                        }
+                                        // Ensure ID is set in clean
+                                        clean.id = item.id;
+
+                                        // Size Check Warning
+                                        const docSize = JSON.stringify(clean).length;
+                                        if (docSize > 900000) console.warn(`Large Document Write (${docSize} bytes) for ${item.id}. Might fail Firestore limit.`);
+
                                         await db.collection(route).doc(item.id).set(clean, { merge: true });
 
                                         // Mark as Synced
@@ -412,24 +491,27 @@
 
                                     } catch (innerErr) {
                                         console.error(`Failed to sync item ${item.id} in ${route}`, innerErr);
+                                        if (!silent) alert(`Upload Failed for Item ${item.id}: ${innerErr.message}`);
                                         failCount++;
                                     }
                                 }
                             }
 
-                            // Save updated list (with synced=true flags) back to LocalStorage
+                            // Save updated list
                             if (listChanged) {
                                 localStorage.setItem(key, JSON.stringify(items));
                             }
                         }
-                    } catch (e) { console.error(`Upload error ${route}`, e); }
+                    } catch (e) {
+                        console.error(`Upload error ${route}`, e);
+                        lastError = e.message || e.toString(); // Capture last error
+                    }
                 }
 
-                const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-                const msg = `Synced ${success} items in ${duration}s. Skipped ${skipped}. ${failCount > 0 ? `Failed: ${failCount}.` : ''}`;
+                const msg = `Sync Done: ${success} uploaded, ${skipped} skipped. ${failCount > 0 ? `Failures: ${failCount}\nLast Error: ${lastError}` : ''}`;
                 console.log(msg);
-                if (!silent && (success > 0 || failCount > 0 || skipped > 0)) alert(msg);
-                if (statusBtn) statusBtn.innerText = "Synced";
+                if (statusBtn && !silent) statusBtn.innerText = "Syncing Complete!";
+                if (!silent && (success > 0 || failCount > 0)) alert(msg);
             },
 
             downloadFromCloud: async (silent = false) => {
@@ -443,7 +525,7 @@
                 };
                 let success = 0;
                 const statusBtn = document.getElementById('sync-status-text');
-                if (statusBtn) statusBtn.innerText = "Downloading...";
+                if (statusBtn && !silent) statusBtn.innerText = "Downloading...";
 
                 for (const [route, key] of Object.entries(MAPPING)) {
                     try {
@@ -520,7 +602,7 @@
                     } catch (e) { console.error(`Download error ${route}`, e); }
                 }
                 if (!silent) alert(`Downloaded ${success} collections from Firebase.`);
-                if (statusBtn) statusBtn.innerText = "Synced";
+                if (statusBtn && !silent) statusBtn.innerText = "Synced";
 
                 // TRIGGER UI UPDATES
                 window.dispatchEvent(new Event('cloud-sync-complete'));
@@ -1167,7 +1249,7 @@
                                     <div className={`w-2 h-2 rounded-full ${navigator.onLine ? 'bg-green-500' : 'bg-red-500'}`}></div>
                                     {navigator.onLine ? "Cloud Connected" : "Offline Mode"}
                                 </span>
-                                <span>v10.0 (Production)</span>
+                                <span>v13.0 (Production)</span>
                             </div>
                             {error && <p className="text-red-500 text-sm text-center bg-red-50 p-2 rounded">{error}</p>}
                             <div className="flex gap-2">
@@ -1190,7 +1272,7 @@
                             </div>
                             <div className="text-center text-xs text-gray-400 mt-4 space-y-1">
                                 <p>Demo: admin/admin</p>
-                                <p className="text-gray-400 text-[10px] mt-2">v10.0 (Production)</p>
+                                <p className="text-gray-400 text-[10px] mt-2">v16.0 (Production)</p>
                             </div>
                         </form>
                     </div >
@@ -5247,7 +5329,7 @@
         // RESULTS TAB
 
 
-        const ResultsTab = () => {
+        const ResultsTab = (props) => {
             const [batches, setBatches] = useState([]);
             const [selectedBatch, setSelectedBatch] = useState(null);
             const [examType, setExamType] = useState(null);
@@ -5422,6 +5504,7 @@
                         examType={examType}
                         allQPapers={allQPapers}
                         onBack={() => setSelectedStudent(null)}
+                        role={props.role} // Pass role
                     />
                 );
             }
@@ -5533,7 +5616,7 @@
             );
         };
 
-        const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, captureOnly = false }) => {
+        const StudentGradingView = ({ student, batch, examType, allQPapers, onBack, captureOnly = false, role = 'assessor' }) => {
             const [evidence, setEvidence] = useState([]);
             const [answers, setAnswers] = useState({});
             const [grades, setGrades] = useState({});
@@ -5598,20 +5681,9 @@
                 // we might need to merge them. But usually, they are attached to the current exam response or a generic one.
                 // Let's assume they are attached to the actual exam response or we look for ANY evidence.
 
-                if (examType === 'Photo') {
-                    // For Photo Tab, we aggregate ALL evidence from ALL exams to show a gallery
-                    allStudentResponses.forEach(r => {
-                        if (r.evidence && Array.isArray(r.evidence)) {
-                            evList = [...evList, ...r.evidence];
-                        }
-                    });
-                } else {
-                    // For Theory/Practical, show evidence attached to THIS exam.
-                    // PREVIOUSLY: filtered out MANUAL.
-                    // NOW: Include everything (Manual + Auto + Uploads).
-                    if (targetResp && targetResp.evidence) {
-                        evList = targetResp.evidence;
-                    }
+                // STRICT SEPARATION: Only load evidence for the specific Exam Type
+                if (targetResp && targetResp.evidence) {
+                    evList = [...targetResp.evidence];
                 }
 
                 // RESOLVE INDEXEDDB IMAGES
@@ -5822,7 +5894,7 @@
                 const currentResp = idx === -1 ? responses[responses.length - 1] : responses[idx];
                 window.Utils.saveToCloud('responses', currentResp).catch(console.error);
 
-                alert("Grades Saved Successfully! (Synced)");
+                // alert("Grades Saved Successfully! (Synced)");
             };
 
             const deleteEvidence = async () => {
@@ -5860,13 +5932,13 @@
                 }
 
                 setEvidence([]); // Clear UI
-                alert("Evidence Deleted Successfully. (Synced)");
+                // alert("Evidence Deleted Successfully. (Synced)");
             };
 
             // Helper to download all evidence
             const downloadAllEvidence = async () => {
                 // ... existing implementation if needed or kept minimal
-                alert("Download implementation preserved but hidden for brevity. Use original if restored.");
+                // alert("Download implementation preserved but hidden for brevity. Use original if restored.");
             };
 
             // Force Camera to be visible ONLY for Assessor (who has captureOnly=true)
@@ -6387,25 +6459,51 @@
                             <button
                                 onClick={async () => {
                                     const btn = document.getElementById('btn-check-cloud');
-                                    if (btn) btn.innerText = "Checking...";
+                                    if (btn) btn.innerText = "Scanning...";
 
-                                    const cols = ['ssc', 'qps', 'nos', 'pcs', 'batches', 'students', 'assessors', 'responses', 'question_papers', 'synced_chunks'];
-                                    let report = "Cloud Data Status:\n-------------------\n";
-                                    let total = 0;
+                                    // 1. LOCAL DATA CHECK
+                                    let localReport = "LOCAL DATA:\n";
+                                    const localResponses = window.Utils.getResponses();
+                                    let localPhotos = 0, localVideos = 0;
+                                    localResponses.forEach(r => {
+                                        if (r.evidence) r.evidence.forEach(e => {
+                                            if (e.type === 'VIDEO_WEBM' || e.type === 'VIDEO_INDEXED_DB') localVideos++;
+                                            else localPhotos++;
+                                        });
+                                    });
+                                    localReport += `Responses: ${localResponses.length}\nPhotos: ${localPhotos}, Videos: ${localVideos}\n-------------------\n`;
 
-                                    for (const c of cols) {
-                                        try {
-                                            const snap = await db.collection(c).get();
-                                            const count = snap.size;
-                                            total += count;
-                                            report += `${c}: ${count}\n`;
-                                        } catch (e) {
-                                            report += `${c}: Error (${e.message})\n`;
+                                    // 2. CLOUD DATA CHECK
+                                    const cols = ['batches', 'students', 'responses', 'assessors', 'synced_chunks'];
+                                    let cloudReport = "CLOUD DATA:\n";
+
+                                    try {
+                                        // Deep Check for Responses
+                                        const snap = await db.collection('responses').get();
+                                        const responses = snap.docs.map(d => d.data());
+                                        let cloudPhotos = 0, cloudVideos = 0;
+                                        responses.forEach(r => {
+                                            if (r.evidence) r.evidence.forEach(e => {
+                                                if (e.type === 'VIDEO_WEBM' || e.type === 'VIDEO_INDEXED_DB') cloudVideos++;
+                                                else cloudPhotos++;
+                                            });
+                                        });
+
+                                        cloudReport += `Responses: ${responses.length}\nPhotos: ${cloudPhotos}, Videos: ${cloudVideos}\n`;
+
+                                        // Basic Counts for others
+                                        for (const c of cols) {
+                                            if (c === 'responses') continue;
+                                            const s = await db.collection(c).get();
+                                            cloudReport += `${c}: ${s.size}\n`;
                                         }
+
+                                    } catch (e) {
+                                        cloudReport += `Error: ${e.message}`;
                                     }
 
                                     if (btn) btn.innerText = "Check Cloud Data";
-                                    alert(report + `\nTotal Documents: ${total}`);
+                                    alert(localReport + "\n" + cloudReport + "\n(Verify that Cloud Videos count matches your expectations!)");
                                 }}
                                 id="btn-check-cloud"
                                 className="text-xs text-red-600 hover:text-red-800 underline font-medium flex items-center gap-1"
@@ -6483,7 +6581,7 @@
 
         // ADMIN DASHBOARD
         const AdminDashboard = () => {
-            const [activeTab, setActiveTab] = useState('qps');
+            const [activeTab, setActiveTab] = useState('dashboard');
             const [selectedQPForNOS, setSelectedQPForNOS] = useState(null);
             const [allQPapers, setAllQPapers] = useState([]); // Added allQPapers state
 
@@ -6491,6 +6589,10 @@
                 const loadQPs = () => setAllQPapers(window.Utils.getQuestionPapers());
                 loadQPs();
                 window.addEventListener('cloud-sync-complete', loadQPs);
+
+                // Default Sync: Auto-Download on Dashboard Load
+                console.log("Admin Dashboard Loaded: Triggering Auto-Sync...");
+                window.Utils.downloadFromCloud(true); // Silent Sync
 
                 // Real-Time Sync (Commented out Socket.io)
                 // In Firebase, we can use db.collection(...).onSnapshot()
@@ -6813,8 +6915,8 @@
 
             const [timeLeft, setTimeLeft] = useState(0);
             const [webcamActive, setWebcamActive] = useState(false);
-
-            // PROCTORING STATE
+            const [mediaStream, setMediaStream] = useState(null); // NEW: Track stream state
+            const mediaRecorderRef = useRef(null);
             const [warnings, setWarnings] = useState(0);
             const [isLocked, setIsLocked] = useState(false);
             const [proctoringModel, setProctoringModel] = useState(null);
@@ -6823,14 +6925,16 @@
             // State for Visual Alert
             const detectionInterval = useRef(null);
             const autoCaptureInterval = useRef(null);
-            const mediaRecorderRef = useRef(null);
+
             const recordingSessionRef = useRef(null);
             const segmentSequenceRef = useRef(0);
             const videoChunksRef = useRef([]);
             const recordingExamType = useRef(null); // Persist exam type for the recording session
             const [isRecording, setIsRecording] = useState(false); // UI Indicator
+            const [isSubmitting, setIsSubmitting] = useState(false);
 
             const [streamActive, setStreamActive] = useState(false);
+            const compositeReqRef = useRef(null); // Reference for Canvas Animation Frame
 
             const startCameraManual = async () => {
                 try {
@@ -6842,6 +6946,7 @@
                         video.play().catch(e => console.error("Play Error", e));
                         setStreamActive(true);
                         setWebcamActive(true);
+                        setMediaStream(stream); // Fix: Prevent useEffect loop
                         console.log("Camera Started Successfully");
                     } else {
                         alert("Error: Video element not found. Please refresh.");
@@ -7011,7 +7116,7 @@
                 }
 
                 const startSegment = () => {
-                    const stream = document.getElementById('student-cam')?.srcObject;
+                    const stream = mediaStream; // Use state stream
                     if (!stream) return;
 
                     let localChunks = [];
@@ -7051,50 +7156,17 @@
                         // 2. FORCE SYNC
                         window.Utils.uploadToCloud(true);
 
-                        // 3. SAVE VIDEO BLOB & UPLOAD (Parallel)
-                        const saveLocal = VideoDB.saveVideo(videoKey, blob).then(() => console.log("Video Blob Saved to DB"));
-
-                        const uploadCloud = new Promise((resolve, reject) => {
-                            if (window.firebase && storage) {
-                                console.log("Starting Cloud Video Upload...");
-                                const ref = storage.ref(`exam_videos/${user.id}/${videoKey}.webm`);
-                                const task = ref.put(blob);
-
-                                task.on('state_changed',
-                                    (snapshot) => {
-                                        const p = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-                                        console.log(`Upload Progress: ${p.toFixed(0)}%`);
-                                    },
-                                    (err) => { console.error("Upload Error", err); reject(err); },
-                                    () => {
-                                        task.snapshot.ref.getDownloadURL().then(url => {
-                                            console.log("Upload Complete! URL:", url);
-                                            // Update Metadata with URL
-                                            window.Utils.saveResponse({
-                                                studentId: user.id,
-                                                examType: examMode,
-                                                evidence: [{
-                                                    key: videoKey,
-                                                    downloadUrl: url,
-                                                    status: 'uploaded'
-                                                }]
-                                            });
-                                            window.Utils.uploadToCloud(true); // Sync updated metadata
-                                            resolve(url);
-                                        });
-                                    }
-                                );
-                            } else {
-                                resolve(null); // Skip if no storage configured
-                            }
-                        });
-
-                        Promise.allSettled([saveLocal, uploadCloud]).then(() => {
-                            console.log("Video Processing Complete (Local + Cloud)");
-                        }).catch(err => {
-                            console.error("Save Failed", err);
-                            alert("VIDEO SAVE ERROR: " + err.message + "\n(Check console for details)");
-                        });
+                        // 3. SAVE VIDEO BLOB (Local Only - Sync will handle Cloud)
+                        VideoDB.saveVideo(videoKey, blob)
+                            .then(() => {
+                                console.log("Video Blob Saved to DB. Triggering Background Sync...");
+                                // Trigger cloud sync to chunk and upload this video from DB
+                                window.Utils.uploadToCloud(true, 'responses');
+                            })
+                            .catch(err => {
+                                console.error("Save Failed", err);
+                                alert("VIDEO SAVE ERROR: " + err.message);
+                            });
                     };
 
                     recorder.start(1000);
@@ -7106,16 +7178,15 @@
                 if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
                     startSegment();
 
-                    // Setup Interval for Splits (10 mins)
+                    // Setup Interval for Splits (30 Seconds)
                     if (window.studentRecordingInterval) clearInterval(window.studentRecordingInterval);
                     window.studentRecordingInterval = setInterval(() => {
                         if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-                            console.log("Auto-splitting student video...");
+                            console.log("Auto-splitting student video (30s)...");
                             mediaRecorderRef.current.stop();
                             segmentSequenceRef.current += 1;
-                            setTimeout(startSegment, 200);
                         }
-                    }, 3600000); // 1 Hour Interval (Effective Single Video)
+                    }, 30000); // 30 Seconds Interval (User Request)
                 }
 
                 return () => {
@@ -7125,18 +7196,27 @@
                         mediaRecorderRef.current.stop();
                     }
                 };
-            }, [examMode, isLocked, webcamActive, user.id]);
+            }, [examMode, isLocked, webcamActive, user.id, mediaStream]); // Added mediaStream dep
             // Ensure Camera Stream is Attached to Video Element
             useEffect(() => {
                 if (webcamActive && examMode && examMode !== 'VivaLive') {
-                    const video = document.getElementById('student-cam');
-                    if (video && !video.srcObject) {
-                        navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
-                            video.srcObject = stream;
-                        }).catch(e => console.error("Camera Error", e));
+                    // Check if we already have a stream
+                    if (mediaStream) {
+                        const video = document.getElementById('student-cam');
+                        if (video && !video.srcObject) video.srcObject = mediaStream;
+                        return;
                     }
+
+                    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
+                        const video = document.getElementById('student-cam');
+                        if (video) video.srcObject = stream;
+                        setMediaStream(stream); // Set state
+                    }).catch(e => {
+                        console.error("Camera Error", e);
+                        alert("Camera/Audio Access Denied! Please allow access to proceed.");
+                    });
                 }
-            }, [webcamActive, examMode]);
+            }, [webcamActive, examMode, mediaStream]);
 
             // Security: Block Right Click, Copy, Paste
             useEffect(() => {
@@ -7249,9 +7329,9 @@
 
             useEffect(() => {
                 let interval;
-                if (examMode && timeLeft > 0) interval = setInterval(() => setTimeLeft(t => t - 1), 1000);
+                if (examMode && timeLeft > 0 && !isSubmitting) interval = setInterval(() => setTimeLeft(t => t - 1), 1000);
                 return () => clearInterval(interval);
-            }, [examMode, timeLeft]);
+            }, [examMode, timeLeft, isSubmitting]);
 
             const startExam = async (mode) => {
                 let batch = window.Utils.getBatches().find(b => b.id === user.batchId);
@@ -7300,11 +7380,11 @@
                         batch = window.Utils.getBatches().find(b => b.id === user.batchId);
                         status = checkExpiry(batch);
 
-                        alert(`Auto-Sync Completed.\nNew End Date: ${batch.endDate} ${batch.endTime}\nStatus: ${status === 'OK' ? 'Active' : status.status}`);
+                        console.log(`Auto-Sync Completed.\nNew End Date: ${batch.endDate} ${batch.endTime}\nStatus: ${status === 'OK' ? 'Active' : status.status}`);
 
                     } catch (e) {
                         console.error("Auto-heal sync failed", e);
-                        alert(`Auto-Sync Failed: ${e.message}\nPlease check internet connection.`);
+                        // alert(`Auto-Sync Failed: ${e.message}\nPlease check internet connection.`);
                     }
                 }
 
@@ -7342,33 +7422,138 @@
                     setQuestions(qp.questions);
                     setTimeLeft(qp.totalTime * 60);
                     setExamMode(mode);
-                    setWebcamActive(true);
-                    navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
-                        document.getElementById('student-cam').srcObject = stream;
-                    });
+
+                    if (mode === 'Practical') {
+                        // COMPOSITE RECORDING: Screen + Webcam
+                        try {
+                            const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { cursor: "always" }, audio: true });
+                            const camStream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240, facingMode: "user" }, audio: true });
+
+                            // Hidden Video Elements for Source
+                            const screenVid = document.createElement('video');
+                            screenVid.srcObject = screenStream;
+                            screenVid.muted = true;
+                            screenVid.play();
+
+                            const camVid = document.createElement('video');
+                            camVid.srcObject = camStream;
+                            camVid.muted = true;
+                            camVid.play();
+
+                            // Canvas for Compositing
+                            const canvas = document.createElement('canvas');
+                            canvas.width = 1280; // Standard HD
+                            canvas.height = 720;
+                            const ctx = canvas.getContext('2d');
+
+                            // Animation Loop
+                            const drawComposite = () => {
+                                if (!screenVid.paused && !screenVid.ended) {
+                                    // 1. Draw Screen (Background)
+                                    ctx.drawImage(screenVid, 0, 0, canvas.width, canvas.height);
+
+                                    // 2. Draw Webcam (Bottom Right Overlay)
+                                    if (!camVid.paused && !camVid.ended) {
+                                        const camW = 240; // 20% width approx
+                                        const camH = 180;
+                                        const margin = 20;
+                                        ctx.strokeStyle = "red";
+                                        ctx.lineWidth = 2;
+                                        ctx.drawImage(camVid, canvas.width - camW - margin, canvas.height - camH - margin, camW, camH);
+                                        ctx.strokeRect(canvas.width - camW - margin, canvas.height - camH - margin, camW, camH);
+                                    }
+                                }
+                                compositeReqRef.current = requestAnimationFrame(drawComposite);
+                            };
+
+                            // Wait for video load
+                            screenVid.onloadedmetadata = () => {
+                                drawComposite();
+                            };
+
+                            // Merge Audio Tracks (Sys Audio + Mic)
+                            const audioTracks = [...screenStream.getAudioTracks(), ...camStream.getAudioTracks()];
+                            const compositeStream = canvas.captureStream(30); // 30 FPS
+                            if (audioTracks.length > 0) {
+                                audioTracks.forEach(t => compositeStream.addTrack(t));
+                            }
+
+                            setMediaStream(compositeStream);
+                            setWebcamActive(true);
+                            setStreamActive(true);
+
+                            // Handle Stop (Stop both source streams)
+                            compositeStream.getVideoTracks()[0].onended = () => {
+                                screenStream.getTracks().forEach(t => t.stop());
+                                camStream.getTracks().forEach(t => t.stop());
+                                if (compositeReqRef.current) cancelAnimationFrame(compositeReqRef.current);
+                            };
+
+                        } catch (err) {
+                            console.error("Composite Setup Failed", err);
+                            alert("Error: You MUST allow BOTH Screen Share and Camera permissions for Practical Exams.\nPlease reload and try again.");
+                            setExamMode(null);
+                        }
+                    } else {
+                        setWebcamActive(true);
+                        // stream useEffect will handle getUserMedia for Theory (Webcam)
+                    }
                 } else {
                     alert(`Exam Error: The Question Paper (ID: ${pid}) assigned to this batch was not found.\nPlease contact Admin to Assign QP and Sync.`);
                 }
             };
 
-            const [isSubmitting, setIsSubmitting] = useState(false);
+
+
+            const endExam = () => {
+                // STOP MEDIA
+                if (mediaStream) {
+                    mediaStream.getTracks().forEach(track => track.stop());
+                }
+                if (compositeReqRef.current) {
+                    cancelAnimationFrame(compositeReqRef.current);
+                    compositeReqRef.current = null;
+                }
+                // RESET STATE
+                setMediaStream(null);
+                setWebcamActive(false);
+                setStreamActive(false);
+                setExamMode(null);
+                setIsSubmitting(false);
+            };
 
             const submitExam = async () => {
                 if (isSubmitting) return;
                 setIsSubmitting(true);
 
                 // Capture final image (Safe Mode)
-                let finalEvidence = [];
+                let finalPhoto = null;
                 try {
                     const v = document.getElementById('student-cam');
                     if (v && v.readyState === 4) { // HAVE_ENOUGH_DATA
                         const c = document.createElement('canvas'); c.width = 300; c.height = 200;
                         c.getContext('2d').drawImage(v, 0, 0, 300, 200);
-                        finalEvidence.push({ img: c.toDataURL(), time: new Date().toISOString(), type: 'SUBMISSION' });
+                        finalPhoto = { img: c.toDataURL(), time: new Date().toISOString(), type: 'SUBMISSION' };
                     }
                 } catch (e) {
                     console.error("Final Capture Failed", e);
                 }
+
+                // STOP RECORDING EXPLICITLY & WAIT
+                if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+                    mediaRecorderRef.current.stop();
+                    setIsRecording(false);
+                    // Critical: Wait for onstop data to hit localStorage (Extended for 30s chunks)
+                    await new Promise(r => setTimeout(r, 4000));
+                }
+                if (window.studentRecordingInterval) clearInterval(window.studentRecordingInterval);
+
+                // RE-FETCH EVIDENCE (Includes the just-saved video)
+                const currentResp = window.Utils.getResponses().find(r => r.studentId === user.id && r.examType === examMode);
+                let finalEvidence = currentResp?.evidence || [];
+
+                // Add Final Photo
+                if (finalPhoto) finalEvidence.push(finalPhoto);
 
                 // Calculate Auto-Grades (Initial System Grading)
                 const autoGrades = {};
@@ -7396,26 +7581,39 @@
                     evidence: finalEvidence
                 };
 
-                // AUTO-UPLOAD: Attempt to sync immediately
+                // AUTO-UPLOAD: Attempt to sync immediately (Scoped to Current Student)
                 try {
                     const statusBtn = document.getElementById('sync-status-text');
                     if (statusBtn) statusBtn.innerText = "Uploading Answer...";
 
                     await window.Utils.saveResponse(respObj);
 
-                    // Small delay to ensure UI updates
-                    await new Promise(r => setTimeout(r, 100));
-                    await window.Utils.uploadToCloud(true);
+                    // Wait for local video save (give it a moment to finish async IndexedDB writes)
+                    await new Promise(r => setTimeout(r, 1000));
 
-                    alert('Submitted and Synced to Cloud Successfully!');
+                    // Trigger Visible Sync (Only Responses & Only This Student)
+                    // Robust Check: String convert and                    // Force Full Sync (Visible Errors) to ensure evidence is safely in cloud
+                    // Pass 'false' for silent to enable alerts if something goes wrong
+                    const filterByStudent = (item) => String(item.studentId || '').trim() === String(user.id || '').trim();
+                    await window.Utils.uploadToCloud(false, 'responses', filterByStudent);
+
+                    // SUMMARY POPUP (User Request)
+                    const totalPhotos = finalEvidence.filter(e => e.type && (e.type.includes('PHOTO') || e.type.includes('MANUAL'))).length;
+
+                    // Improved Video Calculation: Count segments * 30s + any remaining manual clips
+                    // Since we use 30s fixed segments now, count filtering by 'VIDEO' or 'SEGMENT'
+                    const videoSegments = finalEvidence.filter(e => e.type && (e.type.includes('VIDEO') || e.isSegment)).length;
+                    const totalVideoSec = videoSegments * 30;
+
+                    alert(`Exam Submitted Successfully!\n\nSummary:\n- Video Uploaded: ~${totalVideoSec} Seconds\n- Photos Uploaded: ${totalPhotos}`);
+
+                    endExam();
+
                 } catch (e) {
-                    console.error(e);
-                    alert('Submitted Locally! (Upload Failed. Please click "Upload" button manually)');
+                    console.error("Submit Sync Failed", e);
+                    alert("Submitted to LOCAL STORAGE. Cloud Sync Failed (" + e.message + "). Please enable internet and click 'Sync Data' manually.");
+                    endExam();
                 }
-
-                setExamMode(null);
-                setWebcamActive(false);
-                setIsSubmitting(false);
             };
 
 
@@ -7453,7 +7651,7 @@
                             <button onClick={() => setExamMode('VivaLive')} className="px-6 py-2 bg-indigo-600 rounded-lg text-white hover:bg-indigo-700 transition-colors text-sm font-bold">
                                 Join Now (Force)
                             </button>
-                            <button onClick={() => setExamMode(null)} className="px-6 py-2 border border-gray-600 rounded-lg text-gray-400 hover:text-white hover:border-gray-400 transition-colors text-sm">
+                            <button onClick={endExam} className="px-6 py-2 border border-gray-600 rounded-lg text-gray-400 hover:text-white hover:border-gray-400 transition-colors text-sm">
                                 Leave Waiting Room
                             </button>
                         </div>
@@ -7491,7 +7689,7 @@
                             <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 flex gap-6 bg-gray-900/80 backdrop-blur-md px-8 py-3 rounded-full border border-gray-700">
                                 <div className="p-3 rounded-full bg-gray-700 text-white"><Icons.Microphone className="w-6 h-6" /></div>
                                 <div className="p-3 rounded-full bg-gray-700 text-white"><Icons.Video className="w-6 h-6" /></div>
-                                <button onClick={() => setExamMode(null)} className="p-3 rounded-full bg-red-600 text-white hover:bg-red-700"><Icons.PhoneMissed className="w-6 h-6" /></button>
+                                <button onClick={endExam} className="p-3 rounded-full bg-red-600 text-white hover:bg-red-700"><Icons.PhoneMissed className="w-6 h-6" /></button>
                             </div>
                         </div>
                     </div>
@@ -7555,7 +7753,7 @@
                         <div className="w-1/4 bg-gray-100 p-4 border-l">
                             <div className="relative">
                                 <div className="relative bg-black rounded mb-2 h-48 flex items-center justify-center overflow-hidden">
-                                    <video id="student-cam" autoPlay muted playsInline className={`w-full h-full object-cover transform scale-x-[-1] ${streamActive ? 'block' : 'hidden'}`}></video>
+                                    <video id="student-cam" autoPlay muted playsInline className={`w-full h-full object-cover transform ${examMode === 'Practical' ? '' : 'scale-x-[-1]'} ${streamActive ? 'block' : 'hidden'}`}></video>
                                     {!streamActive && (
                                         <div className="absolute inset-0 flex flex-col items-center justify-center z-20">
                                             <p className="text-white text-xs mb-2">Camera Off</p>
@@ -7775,6 +7973,41 @@
         };
 
 
+        // SYNC OVERLAY COMPONENT
+        const SyncOverlay = () => {
+            React.useEffect(() => {
+                const el = document.getElementById('sync-status-text');
+                if (!el) return;
+
+                // Watch for text changes
+                const observer = new MutationObserver(() => {
+                    const text = el.innerText;
+                    if (text && text.trim().length > 0) {
+                        el.classList.remove('translate-y-24', 'opacity-0');
+                        // Auto-hide after success
+                        if (text.includes('Synced') || text.includes('Complete')) {
+                            setTimeout(() => {
+                                el.classList.add('translate-y-24', 'opacity-0');
+                                // Optional: clear text after animation
+                                setTimeout(() => el.innerText = '', 500);
+                            }, 3000);
+                        }
+                    } else {
+                        el.classList.add('translate-y-24', 'opacity-0');
+                    }
+                });
+
+                observer.observe(el, { characterData: true, childList: true, subtree: true });
+                return () => observer.disconnect();
+            }, []);
+
+            return (
+                <div id="sync-status-text"
+                    className="fixed bottom-6 right-6 bg-slate-900 text-white px-6 py-4 rounded-xl shadow-2xl z-[9999] font-bold transition-all duration-500 transform translate-y-24 opacity-0 flex items-center gap-3 border border-slate-700">
+                </div>
+            );
+        };
+
         // MAIN APP
         const App = () => {
             const [user, setUser] = React.useState(null);
@@ -7796,24 +8029,28 @@
                 setUser(null);
             };
 
-            if (!user) {
-                return <LoginScreen onLogin={handleLogin} />;
-            }
-
             return (
                 <React.Fragment>
-                    {user.role === 'admin' && <AdminDashboard />}
-                    {user.role === 'student' && <StudentPortal user={user} />}
-                    {user.role === 'assessor' && <AssessorPortal user={user} />}
+                    <SyncOverlay />
 
-                    {/* Global Logout for Safety */}
-                    <button
-                        onClick={handleLogout}
-                        className="fixed bottom-4 left-4 z-[100] bg-red-600 text-white px-4 py-2 rounded-full shadow-lg text-xs font-bold opacity-50 hover:opacity-100 transition-opacity"
-                        title="Logout"
-                    >
-                        <Icons.Lock className="w-4 h-4 inline mr-1" /> Logout
-                    </button>
+                    {!user ? (
+                        <LoginScreen onLogin={handleLogin} />
+                    ) : (
+                        <React.Fragment>
+                            {user.role === 'admin' && <AdminDashboard />}
+                            {user.role === 'student' && <StudentPortal user={user} />}
+                            {user.role === 'assessor' && <AssessorPortal user={user} />}
+
+                            {/* Global Logout for Safety */}
+                            <button
+                                onClick={handleLogout}
+                                className="fixed bottom-4 left-4 z-[100] bg-red-600 text-white px-4 py-2 rounded-full shadow-lg text-xs font-bold opacity-50 hover:opacity-100 transition-opacity"
+                                title="Logout"
+                            >
+                                <Icons.Lock className="w-4 h-4 inline mr-1" /> Logout
+                            </button>
+                        </React.Fragment>
+                    )}
                 </React.Fragment>
             );
         };

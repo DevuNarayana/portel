@@ -4,7 +4,7 @@
     "description": "Backend for Online Exam System",
     "main": "index.js",
     "engines": {
-        "node": ">=18.0.0"
+        "node": "13.x"
     },
     "scripts": {
         "start": "node index.js",
