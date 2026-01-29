@@ -1316,7 +1316,7 @@
                                     <div className={`w-2 h-2 rounded-full ${navigator.onLine ? 'bg-green-500' : 'bg-red-500'}`}></div>
                                     {navigator.onLine ? "Cloud Connected" : "Offline Mode"}
                                 </span>
-                                <span>v13.0 (Production)</span>
+                                <span>v16.1 (Production)</span>
                             </div>
                             {error && <p className="text-red-500 text-sm text-center bg-red-50 p-2 rounded">{error}</p>}
                             <div className="flex gap-2">
@@ -1339,11 +1339,11 @@
                             </div>
                             <div className="text-center text-xs text-gray-400 mt-4 space-y-1">
                                 <p>Demo: admin/admin</p>
-                                <p className="text-gray-400 text-[10px] mt-2">v16.0 (Production)</p>
+                                <p className="text-gray-400 text-[10px] mt-2">v16.1 (Production)</p>
                             </div>
                         </form>
-                    </div >
-                </div >
+                    </div>
+                </div>
             );
         };
 
@@ -5018,6 +5018,11 @@
                                                 </tbody>
                                             </table>
                                         </div>
+                                        <div className="mt-6 flex justify-end">
+                                            <button onClick={() => setShowStudentModal(false)} className="bg-gray-500 text-white px-6 py-2 rounded hover:bg-gray-600 font-medium shadow-sm transition-colors">
+                                                Close
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -7044,14 +7049,14 @@
 
                 const initViva = async () => {
                     console.log("Initializing Viva Connection...");
-                    
+
                     // 1. Signaling
                     const signaling = new VivaSignaling(user.batchId, user.id, 'student');
                     signalingRef.current = signaling;
-                    
+
                     try {
                         await signaling.joinRoom();
-                    } catch(e) {
+                    } catch (e) {
                         alert(e.message);
                         setExamMode('VivaWait');
                         return;
@@ -7078,7 +7083,7 @@
                         console.log("Remote Stream Received");
                         setRemoteStream(event.streams[0]);
                         const remoteVid = document.getElementById('remote-assessor-video');
-                        if(remoteVid) remoteVid.srcObject = event.streams[0];
+                        if (remoteVid) remoteVid.srcObject = event.streams[0];
                     };
 
                     // 5. ICE Candidates
