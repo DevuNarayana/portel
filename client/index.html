@@ -189,6 +189,73 @@
             }
         };
 
+
+        // VIVA SIGNALING HELPER (Firestore WebRTC)
+        class VivaSignaling {
+            constructor(batchId, studentId, role) {
+                this.batchId = batchId;
+                this.studentId = studentId;
+                this.role = role; // 'host' or 'student'
+                this.roomId = `${batchId}_${studentId}`;
+                this.roomRef = db.collection('viva_sessions').doc(this.roomId);
+                this.candidatesCollection = this.roomRef.collection(role === 'host' ? 'student_candidates' : 'host_candidates');
+            }
+
+            async createRoom() {
+                await this.roomRef.set({
+                    createdAt: new Date().toISOString(),
+                    hostOnline: true
+                }, { merge: true });
+            }
+
+            async joinRoom() {
+                const doc = await this.roomRef.get();
+                if (!doc.exists) throw new Error("Room not found. Assessor must start the session first.");
+            }
+
+            // Listen for Remote Description (Offer/Answer)
+            onRemoteDescription(callback) {
+                return this.roomRef.onSnapshot(snapshot => {
+                    const data = snapshot.data();
+                    if (!data) return;
+                    // If Host: Listen for Answer. If Student: Listen for Offer.
+                    if (this.role === 'host' && data.answer && !this.processedAnswer) {
+                        this.processedAnswer = true;
+                        callback(data.answer);
+                    }
+                    if (this.role === 'student' && data.offer && !this.processedOffer) {
+                        this.processedOffer = true;
+                        callback(data.offer);
+                    }
+                });
+            }
+
+            async sendOffer(offer) {
+                await this.roomRef.update({ offer: { type: offer.type, sdp: offer.sdp } });
+            }
+
+            async sendAnswer(answer) {
+                await this.roomRef.update({ answer: { type: answer.type, sdp: answer.sdp } });
+            }
+
+            // ICE Candidates
+            async sendIceCandidate(candidate) {
+                const targetCollection = this.roomRef.collection(this.role === 'host' ? 'host_candidates' : 'student_candidates');
+                await targetCollection.add(candidate.toJSON());
+            }
+
+            onIceCandidate(callback) {
+                const sourceCollection = this.roomRef.collection(this.role === 'host' ? 'student_candidates' : 'host_candidates');
+                return sourceCollection.onSnapshot(snapshot => {
+                    snapshot.docChanges().forEach(change => {
+                        if (change.type === 'added') {
+                            callback(change.doc.data());
+                        }
+                    });
+                });
+            }
+        }
+
         window.Utils = {
             generateId: () => 'id_' + Math.random().toString(36).substr(2, 9) + Date.now(),
 
@@ -6969,35 +7036,76 @@
 
             // WEBRTC STATE FOR VIVA LIVE
             const [remoteStream, setRemoteStream] = useState(null);
-            const socketRef = useRef(null);
             const peerRef = useRef(null);
+            const signalingRef = useRef(null);
 
             useEffect(() => {
-                if (examMode !== 'VivaLive' && examMode !== 'VivaWait') return;
+                if (examMode !== 'VivaLive') return;
 
-                console.warn("Socket.io features (Viva Signaling) are currently disabled for students. Real-time signaling needs to be migrated to Firestore.");
+                const initViva = async () => {
+                    console.log("Initializing Viva Connection...");
+                    
+                    // 1. Signaling
+                    const signaling = new VivaSignaling(user.batchId, user.id, 'student');
+                    signalingRef.current = signaling;
+                    
+                    try {
+                        await signaling.joinRoom();
+                    } catch(e) {
+                        alert(e.message);
+                        setExamMode('VivaWait');
+                        return;
+                    }
 
-                // Initialize PeerConnection (Stubbed)
-                peerRef.current = new RTCPeerConnection({
-                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-                });
-                const pc = peerRef.current;
+                    // 2. PeerConnection
+                    const pc = new RTCPeerConnection({
+                        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                    });
+                    peerRef.current = pc;
 
-                // Add Local Video Tracks
-                navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
-                    const video = document.getElementById('student-cam-viva');
-                    if (video) video.srcObject = stream;
-                    stream.getTracks().forEach(track => pc.addTrack(track, stream));
-                });
+                    // 3. Local Stream
+                    try {
+                        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                        const video = document.getElementById('student-cam-viva');
+                        if (video) video.srcObject = stream;
+                        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+                    } catch (e) {
+                        console.error("Viva Camera Error", e);
+                    }
 
-                pc.ontrack = (event) => {
-                    setRemoteStream(event.streams[0]);
+                    // 4. Remote Stream
+                    pc.ontrack = (event) => {
+                        console.log("Remote Stream Received");
+                        setRemoteStream(event.streams[0]);
+                        const remoteVid = document.getElementById('remote-assessor-video');
+                        if(remoteVid) remoteVid.srcObject = event.streams[0];
+                    };
+
+                    // 5. ICE Candidates
+                    pc.onicecandidate = (event) => {
+                        if (event.candidate) signaling.sendIceCandidate(event.candidate);
+                    };
+                    signaling.onIceCandidate(candidate => {
+                        pc.addIceCandidate(new RTCIceCandidate(candidate));
+                    });
+
+                    // 6. Listen for Offer
+                    signaling.onRemoteDescription(async (offer) => {
+                        console.log("Received Offer");
+                        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+                        const answer = await pc.createAnswer();
+                        await pc.setLocalDescription(answer);
+                        await signaling.sendAnswer(answer);
+                    });
                 };
+
+                initViva();
 
                 return () => {
                     if (peerRef.current) peerRef.current.close();
+                    // Stop local tracks? Maybe keep them if we want fast reconnect
                 };
-            }, [examMode, user.batchId]);
+            }, [examMode]);
             // Poll for Assessor "Admit" signal
             // (Socket logic handled separately)
 
@@ -7312,20 +7420,36 @@
                             });
                         }
 
-                        // PERIODIC SNAPSHOT (Every ~1 minute = 20 ticks of 3000ms)
-                        if (tick % 20 === 0) {
-                            const c = document.createElement('canvas'); c.width = 300; c.height = 200;
-                            c.getContext('2d').drawImage(video, 0, 0, 300, 200);
-                            window.Utils.saveResponse({
-                                studentId: user.id, examType: examMode,
-                                evidence: [{ img: c.toDataURL(), time: new Date().toISOString(), type: 'AUTO_SNAPSHOT' }]
-                            });
-                        }
+                        // PERIODIC SNAPSHOT REMOVED (Moved to independent loop)
                     }
                 }, 3000); // Check every 3 seconds
 
                 return () => clearInterval(detectionInterval.current);
             }, [examMode, webcamActive, isLocked, proctoringModel, warnings]);
+
+            // INDEPENDENT PHOTO CAPTURE LOOP (Decoupled from AI Model)
+            useEffect(() => {
+                if (!examMode || isLocked || !webcamActive || examMode === 'VivaLive' || examMode === 'VivaWait') return;
+
+                const capturePhoto = () => {
+                    const video = document.getElementById('student-cam');
+                    if (video && video.readyState === 4) {
+                        const c = document.createElement('canvas'); c.width = 300; c.height = 200;
+                        c.getContext('2d').drawImage(video, 0, 0, 300, 200);
+                        console.log("Auto-Snapshot Taken (Independent Loop)");
+                        window.Utils.saveResponse({
+                            studentId: user.id, examType: examMode,
+                            evidence: [{ img: c.toDataURL(), time: new Date().toISOString(), type: 'AUTO_SNAPSHOT' }]
+                        });
+                    }
+                };
+
+                // Capture immediately on start (optional)
+                // capturePhoto(); 
+
+                const interval = setInterval(capturePhoto, 60000); // Every 60 Seconds
+                return () => clearInterval(interval);
+            }, [examMode, webcamActive, isLocked]);
 
             useEffect(() => {
                 let interval;
@@ -7541,10 +7665,12 @@
 
                 // STOP RECORDING EXPLICITLY & WAIT
                 if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+                    console.log("Stopping Recorder for Submission...");
+                    const stopPromise = new Promise(resolve => { mediaRecorderRef.current.onstop = resolve; });
                     mediaRecorderRef.current.stop();
                     setIsRecording(false);
-                    // Critical: Wait for onstop data to hit localStorage (Extended for 30s chunks)
-                    await new Promise(r => setTimeout(r, 4000));
+                    await stopPromise;
+                    await new Promise(r => setTimeout(r, 2000));
                 }
                 if (window.studentRecordingInterval) clearInterval(window.studentRecordingInterval);
 
@@ -7664,6 +7790,7 @@
                             {/* Assessor Feed (Center) */}
                             {remoteStream ? (
                                 <video
+                                    id="remote-assessor-video"
                                     ref={ref => { if (ref && remoteStream) ref.srcObject = remoteStream }}
                                     autoPlay
                                     className="absolute inset-0 w-full h-full object-contain bg-black"
