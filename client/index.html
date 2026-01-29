@@ -105,10 +105,10 @@
                 auth = firebase.auth();
                 storage = firebase.storage();
 
-                // Enable Offline Persistence
-                db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
-                    console.warn("Firestore Persistence Error:", err.code);
-                });
+                // Enable Offline Persistence (DISABLED for Viva Signaling Stability)
+                // db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
+                //     console.warn("Firestore Persistence Error:", err.code);
+                // });
                 console.log("Firebase Initialized");
             } else {
                 console.error("Firebase SDK not loaded.");
