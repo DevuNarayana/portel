@@ -154,12 +154,19 @@
                 });
             },
             saveVideo: async (key, blob) => {
+                console.log(`[VideoDB] Saving ${key} (Size: ${blob.size})...`);
                 try {
                     const db = await VideoDB.init();
                     return new Promise((resolve, reject) => {
                         const tx = db.transaction(VideoDB.storeName, 'readwrite');
-                        tx.oncomplete = () => resolve();
-                        tx.onerror = (e) => reject(e.target.error);
+                        tx.oncomplete = () => {
+                            console.log(`[VideoDB] Saved ${key} Successfully.`);
+                            resolve();
+                        };
+                        tx.onerror = (e) => {
+                            console.error(`[VideoDB] Save Failed for ${key}`, e.target.error);
+                            reject(e.target.error);
+                        };
                         tx.objectStore(VideoDB.storeName).put(blob, key);
                     });
                 } catch (e) {
@@ -178,12 +185,21 @@
                 }
             },
             getVideo: async (key) => {
+                // console.log(`[VideoDB] Fetching ${key}...`);
                 const db = await VideoDB.init();
                 return new Promise((resolve, reject) => {
                     const tx = db.transaction(VideoDB.storeName, 'readonly');
                     const store = tx.objectStore(VideoDB.storeName);
                     const request = store.get(key);
-                    request.onsuccess = () => resolve(request.result);
+                    request.onsuccess = () => {
+                        if (request.result) {
+                            // console.log(`[VideoDB] Found ${key} (Size: ${request.result.size})`);
+                            resolve(request.result);
+                        } else {
+                            console.warn(`[VideoDB] Key NOT FOUND: ${key}`);
+                            resolve(undefined);
+                        }
+                    };
                     request.onerror = (e) => reject(e.target.error);
                 });
             }
@@ -1075,6 +1091,12 @@
                                 const blob = window.Utils.base64ToBlob(ev.img);
                                 const key = `ev_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                                 await VideoDB.saveVideo(key, blob); // reusing generic Method
+
+                                // VERIFY IMMEDIATE READ
+                                const check = await VideoDB.getVideo(key);
+                                if (!check) console.error(`[CRITICAL] Immediate Readback Failed for ${key}`);
+                                else console.log(`[VideoDB] Verified ${key} exists.`);
+
                                 response.evidence[i] = { ...ev, img: key, storage: 'indexeddb' };
                             }
                         }
@@ -1362,6 +1384,7 @@
                 <div className="w-64 bg-slate-800 text-white min-h-screen flex flex-col">
                     <div className="p-6 border-b border-slate-700">
                         <h1 className="text-xl font-bold">NSXpertise</h1>
+                        <p className="text-xs text-slate-400 mt-1">v16.1</p>
                     </div>
                     <nav className="flex-1 p-4 space-y-1">
                         {menuItems.map(item => (
@@ -6854,7 +6877,11 @@
                 if (!streamRef.current) return;
 
                 const stream = streamRef.current;
-                const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+                let options = { mimeType: 'video/webm;codecs=vp9' };
+                if (!MediaRecorder.isTypeSupported(options.mimeType)) options = { mimeType: 'video/webm' };
+                if (!MediaRecorder.isTypeSupported(options.mimeType)) options = { mimeType: 'video/mp4' };
+                if (!MediaRecorder.isTypeSupported(options.mimeType)) options = {};
+                const recorder = new MediaRecorder(stream, options);
                 const chunks = [];
                 recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
                 recorder.onstop = async () => {
@@ -6883,7 +6910,11 @@
             };
 
             const capturePhoto = () => {
-                if (!streamRef.current && !videoRef.current) { startCamera(); return; }
+                if ((!streamRef.current && !videoRef.current) || (videoRef.current && videoRef.current.readyState < 2)) {
+                    console.warn("CapturePhoto: Stream/Video not ready. ReadyState:", videoRef.current?.readyState);
+                    startCamera();
+                    return;
+                }
                 const canvas = document.createElement('canvas');
                 canvas.width = 640; canvas.height = 480;
                 canvas.getContext('2d').drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
@@ -6989,6 +7020,7 @@
             const [webcamActive, setWebcamActive] = useState(false);
             const [mediaStream, setMediaStream] = useState(null); // NEW: Track stream state
             const mediaRecorderRef = useRef(null);
+            const videoRef = useRef(null);
             const [warnings, setWarnings] = useState(0);
             const [isLocked, setIsLocked] = useState(false);
             const [proctoringModel, setProctoringModel] = useState(null);
@@ -7012,7 +7044,7 @@
                 try {
                     console.log("Requesting Camera...");
                     const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-                    const video = document.getElementById('student-cam');
+                    const video = videoRef.current;
                     if (video) {
                         video.srcObject = stream;
                         video.play().catch(e => console.error("Play Error", e));
@@ -7191,8 +7223,9 @@
                 }
 
                 autoCaptureInterval.current = setInterval(() => {
-                    const video = document.getElementById('student-cam');
-                    if (video && video.readyState === 4) {
+                    const video = videoRef.current;
+                    if (video && video.readyState >= 2) {
+                        console.log("AutoCapture: Success");
                         const c = document.createElement('canvas'); c.width = 320; c.height = 240;
                         c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
                         const img = c.toDataURL('image/jpeg', 0.5);
@@ -7240,7 +7273,7 @@
                     const recorder = new MediaRecorder(stream, options);
                     recorder.ondataavailable = e => { if (e.data.size > 0) localChunks.push(e.data); };
 
-                    recorder.onstop = () => {
+                    recorder.onstop = async () => {
                         if (localChunks.length === 0) return;
                         const blob = new Blob(localChunks, { type: 'video/webm' });
                         const currentSeq = segmentSequenceRef.current;
@@ -7248,38 +7281,41 @@
 
                         console.log(`Segment ${currentSeq} Finalized. Size: ${blob.size}`);
 
-                        // 1. SAVE METADATA FIRST (So it shows up in Assessor Portal instantly)
+                        // 1. SAVE METADATA FIRST
                         const evidenceEntry = {
-                            img: null, // No preview image for video to save space
+                            img: null,
                             time: new Date().toISOString(),
                             type: 'VIDEO_INDEXED_DB',
                             key: videoKey,
                             sessionId: recordingSessionRef.current,
                             sequence: currentSeq,
                             isSegment: true,
-                            status: 'pending' // Flag to track upload status
+                            status: 'pending'
                         };
 
-                        window.Utils.saveResponse({
+                        await window.Utils.saveResponse({
                             studentId: user.id,
                             examType: examMode,
                             evidence: [evidenceEntry]
                         });
 
-                        // 2. FORCE SYNC
-                        window.Utils.uploadToCloud(true);
-
-                        // 3. SAVE VIDEO BLOB (Local Only - Sync will handle Cloud)
+                        // 2. SAVE VIDEO BLOB (Local Only)
                         VideoDB.saveVideo(videoKey, blob)
                             .then(() => {
                                 console.log("Video Blob Saved to DB. Triggering Background Sync...");
-                                // Trigger cloud sync to chunk and upload this video from DB
+                                // 3. FORCE SYNC (Only after Blob is saved)
                                 window.Utils.uploadToCloud(true, 'responses');
                             })
                             .catch(err => {
                                 console.error("Save Failed", err);
                                 alert("VIDEO SAVE ERROR: " + err.message);
                             });
+
+                        // 4. PREPARE NEXT SEGMENT & RESTART
+                        if (recordingSessionRef.current) {
+                            segmentSequenceRef.current++; // Increment for next segment
+                            startSegment();
+                        }
                     };
 
                     recorder.start(1000);
@@ -7297,9 +7333,9 @@
                         if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
                             console.log("Auto-splitting student video (30s)...");
                             mediaRecorderRef.current.stop();
-                            segmentSequenceRef.current += 1;
+                            // Sequence increment handled in startSegment
                         }
-                    }, 30000); // 30 Seconds Interval (User Request)
+                    }, 30000);
                 }
 
                 return () => {
@@ -7315,13 +7351,13 @@
                 if (webcamActive && examMode && examMode !== 'VivaLive') {
                     // Check if we already have a stream
                     if (mediaStream) {
-                        const video = document.getElementById('student-cam');
+                        const video = videoRef.current;
                         if (video && !video.srcObject) video.srcObject = mediaStream;
                         return;
                     }
 
                     navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
-                        const video = document.getElementById('student-cam');
+                        const video = videoRef.current;
                         if (video) video.srcObject = stream;
                         setMediaStream(stream); // Set state
                     }).catch(e => {
@@ -7395,8 +7431,8 @@
                 let tick = 0;
                 detectionInterval.current = setInterval(async () => {
                     tick++;
-                    const video = document.getElementById('student-cam');
-                    if (video && video.readyState === 4) {
+                    const video = videoRef.current;
+                    if (video && video.readyState >= 2) {
                         const predictions = await proctoringModel.detect(video);
 
                         // Check for Mobile Phone
@@ -7437,8 +7473,8 @@
                 if (!examMode || isLocked || !webcamActive || examMode === 'VivaLive' || examMode === 'VivaWait') return;
 
                 const capturePhoto = () => {
-                    const video = document.getElementById('student-cam');
-                    if (video && video.readyState === 4) {
+                    const video = videoRef.current;
+                    if (video && video.readyState >= 2) {
                         const c = document.createElement('canvas'); c.width = 300; c.height = 200;
                         c.getContext('2d').drawImage(video, 0, 0, 300, 200);
                         console.log("Auto-Snapshot Taken (Independent Loop)");
@@ -7658,7 +7694,7 @@
                 // Capture final image (Safe Mode)
                 let finalPhoto = null;
                 try {
-                    const v = document.getElementById('student-cam');
+                    const v = videoRef.current;
                     if (v && v.readyState === 4) { // HAVE_ENOUGH_DATA
                         const c = document.createElement('canvas'); c.width = 300; c.height = 200;
                         c.getContext('2d').drawImage(v, 0, 0, 300, 200);
@@ -7723,7 +7759,7 @@
                     await new Promise(r => setTimeout(r, 1000));
 
                     // Trigger Visible Sync (Only Responses & Only This Student)
-                    // Robust Check: String convert and                    // Force Full Sync (Visible Errors) to ensure evidence is safely in cloud
+                    // Robust Check: String convert and Force Full Sync (Visible Errors) to ensure evidence is safely in cloud
                     // Pass 'false' for silent to enable alerts if something goes wrong
                     const filterByStudent = (item) => String(item.studentId || '').trim() === String(user.id || '').trim();
                     await window.Utils.uploadToCloud(false, 'responses', filterByStudent);
@@ -7885,7 +7921,7 @@
                         <div className="w-1/4 bg-gray-100 p-4 border-l">
                             <div className="relative">
                                 <div className="relative bg-black rounded mb-2 h-48 flex items-center justify-center overflow-hidden">
-                                    <video id="student-cam" autoPlay muted playsInline className={`w-full h-full object-cover transform ${examMode === 'Practical' ? '' : 'scale-x-[-1]'} ${streamActive ? 'block' : 'hidden'}`}></video>
+                                    <video ref={videoRef} id="student-cam" autoPlay muted playsInline className={`w-full h-full object-cover transform ${examMode === 'Practical' ? '' : 'scale-x-[-1]'} ${streamActive ? 'block' : 'hidden'}`}></video>
                                     {!streamActive && (
                                         <div className="absolute inset-0 flex flex-col items-center justify-center z-20">
                                             <p className="text-white text-xs mb-2">Camera Off</p>
@@ -8193,4 +8229,4 @@
     </script>
 </body>
 
-</html>c
+</html>

@@ -1,8 +1,8 @@
-Index 402319 is at Line 6150
-Line 6150:                                     </span>
-Line 6151:                                 </div>
+Index 402319 is at Line 6187
+Line 6187:                                                                             alert("Image not available on this device. Please sync from the source device.");
+Line 6188:                                                                         }
 
-Index 405498 is at Line 6207
-Line 6207:                     <h2 className="text-2xl font-bold mb-6 text-gray-800">Administrator Dashboard</h2>
-Line 6208: 
+Index 405498 is at Line 6230
+Line 6230:                                             <span className="text-sm font-normal text-gray-500 bg-gray-100 px-2 py-1 rounded">QP: {currentQP?.code || 'N/A'}</span>
+Line 6231:                                         </h4>
 

@@ -1,11 +1,23 @@
 #!/usr/bin/env python3
+import re
+
 path = 'client/index.html'
 with open(path, 'r', encoding='utf-8') as f:
     content = f.read()
 
-import re
+# Remove comments
 content = re.sub(r'//.*', '', content)
 content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
+
+# Remove strings (simple approximation)
+# We replace string contents with spaces to keep indices correct
+def replace_strings(text):
+    # Pattern for single, double, and backtick strings
+    # This is not perfect (doesn't handle escaped quotes perfectly in all cases) but better
+    pattern = r"('([^'\\]*(?:\\.[^'\\]*)*)'|\"([^\"\\]*(?:\\.[^\"\\]*)*)\"|`([^`\\]*(?:\\.[^`\\]*)*)`)"
+    return re.sub(pattern, lambda m: ' ' * len(m.group(0)), text)
+
+content = replace_strings(content)
 
 stack = []
 errors = []
@@ -32,9 +44,12 @@ with open('syntax_errors.txt', 'w') as f:
         for e in errors:
             f.write(e + "\n")
             # Context
-            err_idx = int(re.search(r'index (\d+)', e).group(1))
-            start = max(0, err_idx - 50)
-            end = min(len(content), err_idx + 50)
-            f.write("Context:\n" + content[start:end] + "\n\n")
+            try:
+                err_idx = int(re.search(r'index (\d+)', e).group(1))
+                start = max(0, err_idx - 50)
+                end = min(len(content), err_idx + 50)
+                f.write("Context:\n" + content[start:end] + "\n\n")
+            except:
+                pass
     else:
         f.write("No errors found.")
